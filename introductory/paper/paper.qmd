@@ -1,0 +1,57 @@
+---
+title: "Lance: A columnar format for AI data lakes"
+format:
+  arxiv-pdf:
+    keep-tex: true  
+    linenumbers: false
+    doublespacing: false
+    runninghead: "A Preprint"
+  arxiv-html: default
+author:
+  - name: Will Jones
+    affiliations:
+      - name: LanceDB
+    # orcid: 0000-0003-2402-304X
+    email: willjones127@gmail.com
+    # url: https://mm218.dev
+  - name: Lei Xu
+    affiliations:
+      - name: LanceDB
+    # email: 
+    # url:
+  # TODO: add yourself as author
+abstract: |
+  This document is only a demo explaining how to use the template.
+# keywords: 
+#   - template
+#   - demo
+bibliography: bibliography.bib  
+---
+
+# Introduction
+
+<!-- TODO: add introduction -->
+
+Inspired by Procella [see @procella2019].
+
+# Experiments
+
+## Random access
+
+Based on experiments in [see @zeng2023empirical].
+
+## Scanning
+
+
+# Future work
+
+
+# Conclusion
+
+
+{{< pagebreak >}}
+
+# References {.unnumbered}
+
+::: {#refs}
+:::
