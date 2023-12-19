@@ -15,6 +15,7 @@ installed from the website. For Tex, the easiest path is installing TinyTex
 through Quarto:
 
 ```shell
+brew install quarto
 quarto install tinytex
 ```
 
