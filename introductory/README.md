@@ -9,7 +9,7 @@ This paper contains all assets for the introductory paper.
 
 ## Project setup
 
-This project is based on the [Arxiv template](https://github.com/mikemahoney218/quarto-arxiv).
+This project is based on the [ACM template](https://github.com/mikemahoney218/quarto-arxiv).
 You will need to install Quarto as well as some Tex installation. Quarto can be
 installed from the website. For Tex, the easiest path is installing TinyTex
 through Quarto:
@@ -32,5 +32,5 @@ brew install font-latin-modern-math
 The paper can be built with:
 
 ```shell
-quarto render paper/paper.qmd --to arxiv-pdf
+quarto render paper/paper.qmd --to acm-pdf
 ```
