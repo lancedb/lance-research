@@ -132,9 +132,9 @@ abstract: |
 
 # Related work
 
-{{< inlucde design.qmd >}}
+{{< include design.qmd >}}
 
-{{< inlucde experiments.qmd >}}
+{{< include experiments.qmd >}}
 
 # Future work
 

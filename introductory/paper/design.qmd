@@ -1,5 +1,9 @@
 # Design
 
+Lance is designed with the focus on the emerging AI workloads,
+including Automouse driving cars, LLM, recommendation systems, and
+many others.
+
 ## Nested Schema
 
 ## File Layout
