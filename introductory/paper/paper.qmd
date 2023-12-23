@@ -17,24 +17,29 @@ author:
     # orcid: 0000-0003-2402-304X
     email: willjones127@gmail.com
     # url: https://mm218.dev
-  - name: Lei Xu
-    affiliations:
-      - name: LanceDB
-        country: USA
-    # email: 
-  - name: Chang She
-    affiliations:
-      - name: LanceDB
-        country: USA
   - name: Weston Pace
     affiliations:
       - name: LanceDB
         country: USA
+  - name: Rob Meng
+    affiliations:
+      - name: LanceDB
+        country: USA
+  - name: Chang She
+    affiliations:
+      - name: LanceDB
+        country: USA
+
   - name: Qian Zhu
     affiliations:
       - name: LanceDB
         country: USA
-    # email: 
+    # email:
+  - name: Lei Xu
+    affiliations:
+      - name: LanceDB
+        country: USA
+    # email:
 
 # acm-specific metadata
 acm-metadata:
@@ -48,8 +53,8 @@ acm-metadata:
   acmart-options: sigconf
 
   # acm preamble information
-  copyright-year: 2018
-  acm-year: 2018
+  copyright-year: 2024
+  acm-year: 2024
   copyright: acmcopyright
   doi: XXXXXXX.XXXXXXX
   conference-acronym: "Conference acronym 'XX"
@@ -91,7 +96,7 @@ acm-metadata:
      </concept>
     </ccs2012>
     \end{CCSXML}
-    
+
     \ccsdesc[500]{Computer systems organization~Embedded systems}
     \ccsdesc[300]{Computer systems organization~Redundancy}
     \ccsdesc{Computer systems organization~Robotics}
@@ -102,9 +107,9 @@ acm-metadata:
     - neural networks
     - gaze detection
     - text tagging
-  
+
   # if uncommented, this produces a teaser figure
-  # 
+  #
   # teaser:
   #   image: sampleteaser
   #   caption: figure caption
@@ -112,7 +117,7 @@ acm-metadata:
 
 include-in-header:
   - table_workaround.tex
-        
+
 abstract: |
   A clear and well-documented \LaTeX\ document is presented as an
   article formatted for publication by ACM in a conference proceedings
@@ -123,25 +128,21 @@ abstract: |
 
 ---
 
-# Introduction
-
-<!-- TODO: add introduction -->
-
-Inspired by Procella [see @procella2019].
+{{< include intro.qmd >}}
 
 # Related work
 
-# Experiments
+{{< include design.qmd >}}
 
-## Random access
-
-Based on experiments in [see @zeng2023empirical].
-
-## Scanning
-
+{{< include experiments.qmd >}}
 
 # Future work
 
+- Encodings and compression
+  - Tensor
+  - RLE / Delta
+  - Float compression
+  - Multi-pass compression (i.e. [@procella2019])
 
 # Conclusion
 

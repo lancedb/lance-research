@@ -1,0 +1,13 @@
+# Design
+
+Lance is designed with the focus on the emerging AI workloads,
+including autonomous driving cars, LLM, recommendation systems, RAG, and
+many others.
+
+## Schema and Metadata
+
+## File Layout
+
+## Dataset Layout
+
+## Apache Arrow compatibility

@@ -11,12 +11,10 @@ This paper contains all assets for the introductory paper.
 
 This project is based on the [ACM template](https://github.com/mikemahoney218/quarto-arxiv).
 You will need to install Quarto as well as some Tex installation. Quarto can be
-installed from the website. For Tex, the easiest path is installing TinyTex
-through Quarto:
+installed from the website. On Mac, you can install [MacTex](https://www.tug.org/mactex/)
 
 ```shell
 brew install quarto
-quarto install tinytex
 ```
 
 There are some fonts that need to be installed. On Mac, this can be done with:
@@ -32,5 +30,6 @@ brew install font-latin-modern-math
 The paper can be built with:
 
 ```shell
-quarto render paper/paper.qmd --to acm-pdf
+cd paper
+make
 ```
