@@ -6,6 +6,9 @@ Based on experiments in [@zeng2023empirical].
 
 ## Scanning
 
+Scanning data is used in both OLAP queries and Data Loader workloads. As a comparison we'll be using Parquet, a common OLAP format, and TFRecord, a common data Loader format.
+
+There are two major optimizations in Lance aimed at vector and unstructured data. The first is late materialization in queries with filters, which can save IO calls. The second are strong alignment of the on-disk format with the in-memory format.
 
 ### Overall scan performance
 
@@ -66,3 +69,20 @@ ggplot(data, aes(x = format, y = scan_time)) +
       y="Runtime (s)",
      )
 ```
+
+
+### Late materialization
+
+Late materialization can reduce IO costs by deferring the decision whether to load certain cells depending on the result of a filter. This is especially important when the projected columns are large, since the potential IO cost savings are substantial.
+
+Late materialization is an engine optimization, and can be applied to any columnar format. However, the performance benefit of this optimization depends on the page structure of the format. If pages are large and cannot be sliced, then late materialization only will be beneficial to the extent that whole pages can be skipped. In Lance, vector and binary columns are laid out in a flat layout, which can be sliced at the cell-level.
+
+To demonstrate the performance benefit, we measured early versus late materialization strategies in Lance and Parquet. The PyArrow Parquet implementation does not have a built-in late materialization code path, so we created a basic one. Because it is not optimized to be CPU-efficient, we focus on measurements of IO calls and bytes read to give a fair comparison. For Lance and the early-materialization of Parquet, we show the runtime as well.
+
+<!-- Chart 1: line chart. Color: Format, line shape: early vs late,
+       x-axis: filter selectivity, y-axis: runtime -->
+
+<!-- Chart 2: line chart. Color: Format, line shape: early vs late,
+       x-axis: filter selectivity, y-axis: bytes read -->
+
+<!-- TODO: discuss results -->
