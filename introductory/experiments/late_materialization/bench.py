@@ -6,7 +6,7 @@ import os
 import time
 from datetime import datetime
 from itertools import product
-from typing import List, NamedTuple, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
 import fsspec
 import lance
@@ -20,6 +20,8 @@ from metered_fs import MeteredFSHandler
 
 
 class TimeResult(NamedTuple):
+    """Row format of the runtime results CSV file"""
+
     format: str
     columns: str
     predicate: str
@@ -114,14 +116,24 @@ def measure_lance_io(
 
 def scan_parquet(
     ds: pq.ParquetDataset,
+    alt_ds: Optional[pq.ParquetDataset],
     columns: List[str],
     predicate: str,
     late_materialization: bool,
 ) -> int:
     if late_materialization:
-        raise NotImplementedError(
-            "TODO: figure out how to implement late materialization"
-        )
+        if alt_ds is None:
+            raise ValueError("alt_ds must be specified for late materialization")
+        return scan_parquet_late(ds, alt_ds, columns, predicate)
+    else:
+        return scan_parquet_early(ds, columns, predicate)
+
+
+def scan_parquet_early(
+    ds: pq.ParquetDataset,
+    columns: List[str],
+    predicate: str,
+) -> int:
     reader = ds.scanner(
         columns=columns,
         filter=predicate,
@@ -129,6 +141,34 @@ def scan_parquet(
     num_rows = 0
     for batch in reader:
         num_rows += batch.num_rows
+    return num_rows
+
+
+def scan_parquet_late(
+    ds: pq.ParquetDataset,
+    alt_ds: pq.ParquetDataset,
+    columns: List[str],
+    predicate: str,
+) -> int:
+    # First pass, record IOs just reading the filter columns.
+    reader = ds.scanner(
+        columns=["id"],
+        filter=predicate,
+    ).to_batches()
+
+    num_rows = 0
+    for batch in reader:
+        num_rows += batch.num_rows
+
+    # Second pass, do the projection with take. We use the alternate dataset
+    # so that the row ids don't count towards are IO counts.
+    reader = alt_ds.scanner(
+        columns=["id"],
+        filter=predicate,
+    ).to_batches()
+    for batch in reader:
+        ds.take(batch["id"], columns=columns)
+
     return num_rows
 
 
@@ -148,6 +188,7 @@ def measure_parquet_time(
         start = time.perf_counter()
         num_res = scan_parquet(
             dataset,
+            None,
             columns=columns,
             predicate=predicate,
             late_materialization=late_materialization,
@@ -175,9 +216,11 @@ def measure_parquet_io(
     handler = MeteredFSHandler(pa_fs.FSSpecHandler(fsspec.filesystem("file")))
     path = os.path.abspath(os.path.join(path, "parquet"))
     dataset = ds.dataset(path, format="parquet", filesystem=pa_fs.PyFileSystem(handler))
+    dataset_alt = ds.dataset(path, format="parquet")
 
     scan_parquet(
         dataset,
+        dataset_alt,
         columns=columns,
         predicate=predicate,
         late_materialization=late_materialization,
@@ -229,7 +272,10 @@ def run_all(path: str, num_iters: int = 10) -> None:
                     num_iters=num_iters,
                 )
                 writer.writerow(res)
-            # TODO: measure_parquet_time with late_materialization=True
+
+            # Note: we do not measure time with Parquet's late materialization,
+            # because there is not a proper implementation.
+
             res = measure_parquet_time(
                 path=path,
                 columns=columns,
@@ -252,13 +298,13 @@ def run_all(path: str, num_iters: int = 10) -> None:
                 )
                 writer.writerow(res)
 
-            res = measure_parquet_io(
-                path=path,
-                columns=columns,
-                predicate=predicate,
-                late_materialization=late_materialization,
-            )
-            writer.writerow(res)
+                res = measure_parquet_io(
+                    path=path,
+                    columns=columns,
+                    predicate=predicate,
+                    late_materialization=late_materialization,
+                )
+                writer.writerow(res)
 
 
 def run_in_process(func, *args, **kwargs):
