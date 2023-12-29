@@ -1,16 +1,24 @@
 import argparse
 import csv
-import datetime
+from datetime import datetime
+from functools import partial
 from itertools import product
 import json
+from multiprocessing import Process
+import multiprocessing
 import os
 import time
 from typing import List, NamedTuple, Tuple
+import concurrent.futures
 
 import lance
-from lance.tracing import trace_to_chrome
+from lance.lance import trace_to_chrome
 import pyarrow.parquet as pq
+import pyarrow.dataset as ds
 from fsspec.implementations.local import LocalFileSystem
+
+from common import scan_lance
+
 
 class TimeResult(NamedTuple):
     columns: str
@@ -20,34 +28,19 @@ class TimeResult(NamedTuple):
     selectivity: float
     runtime: float
 
-def scan_lance(
-    ds: lance.LanceDataset,
-    columns: List[str],
-    predicate: str,
-    late_materialization: bool,
-) -> int:
-    reader = ds.scanner(
-        columns=columns,
-        predicate=predicate,
-        late_materialization=late_materialization,
-    ).to_batches()
-    num_rows = 0
-    for batch in reader:
-        num_rows += batch.num_rows
-    return num_rows
 
 def measure_lance_time(
     path: str,
     columns: List[str],
     predicate: str,
     late_materialization: bool,
-    num_iters: int=10,
+    num_iters: int = 10,
 ) -> TimeResult:
-    ds = lance.dataset(path)
+    ds = lance.dataset(os.path.join(path, "lance"))
     total_rows = ds.count_rows()
 
     times = []
-    
+
     for _ in range(num_iters):
         start = time.perf_counter()
         num_res = scan_lance(
@@ -60,7 +53,7 @@ def measure_lance_time(
         times.append(end - start)
 
     return TimeResult(
-        columns=','.join(columns),
+        columns=",".join(columns),
         predicate=predicate,
         late_materialization=late_materialization,
         num_rows=total_rows,
@@ -69,37 +62,51 @@ def measure_lance_time(
     )
 
 
+class IOResult(NamedTuple):
+    columns: str
+    predicate: str
+    late_materialization: bool
+    num_ios: int
+    total_bytes: int
+
+
 def measure_lance_io(
     path: str,
     columns: List[str],
     predicate: str,
     late_materialization: bool,
-) -> Tuple[int, int]:
-    ds = lance.dataset(path)
+) -> IOResult:
+    dataset = lance.dataset(os.path.join(path, "lance"))
 
-    # Enable tracing so we can record IOs    
-    trace_to_chrome(file="lance_trace.json", level="debug")
-
+    # Enable tracing so we can record IOs
+    guard = trace_to_chrome("lance_trace.json", "debug")
     scan_lance(
-        ds,
+        dataset,
         columns=columns,
-        filter=predicate,
+        predicate=predicate,
         late_materialization=late_materialization,
     )
+    guard.finish_tracing()
 
     with open("lance_trace.json") as f:
         trace = json.load(f)
     num_ios = 0
     total_bytes = 0
     for event in trace:
-        if event["name"] == "get_range":
+        # ph is the event type.  b is for begin, e is for end
+        if event["name"] == "get_range" and event["ph"] == "b":
             num_ios += 1
             byte_range = event["args"]["range"]
             start, end = byte_range.split("..")
             total_bytes += int(end) - int(start)
-    
-    print(f"IOs: {num_ios}")
-    print(f"Bytes: {total_bytes}")
+
+    return IOResult(
+        columns=",".join(columns),
+        predicate=predicate,
+        late_materialization=late_materialization,
+        num_ios=num_ios,
+        total_bytes=total_bytes,
+    )
 
 
 def scan_parquet(
@@ -109,7 +116,9 @@ def scan_parquet(
     late_materialization: bool,
 ) -> int:
     if late_materialization:
-        raise NotImplementedError("TODO: figure out how to implement late materialization")
+        raise NotImplementedError(
+            "TODO: figure out how to implement late materialization"
+        )
     reader = ds.scanner(
         columns=columns,
         filter=predicate,
@@ -125,17 +134,17 @@ def measure_parquet_time(
     columns: List[str],
     predicate: str,
     late_materialization: bool,
-    num_iters: int=10,
+    num_iters: int = 10,
 ) -> None:
-    ds = pq.ParquetDataset(path)
-    total_rows = ds.count_rows()
+    dataset = ds.dataset(os.path.join(path, "parquet"), format="parquet")
+    total_rows = dataset.count_rows()
 
     times = []
-    
+
     for _ in range(num_iters):
         start = time.perf_counter()
         num_res = scan_parquet(
-            ds,
+            dataset,
             columns=columns,
             predicate=predicate,
             late_materialization=late_materialization,
@@ -144,7 +153,7 @@ def measure_parquet_time(
         times.append(end - start)
 
     return TimeResult(
-        columns=','.join(columns),
+        columns=",".join(columns),
         predicate=predicate,
         late_materialization=late_materialization,
         num_rows=total_rows,
@@ -162,7 +171,7 @@ def measure_parquet_time(
 # ) -> Tuple[int, int]:
 #     ds = pq.ParquetDataset(path)
 
-#     # Enable tracing so we can record IOs    
+#     # Enable tracing so we can record IOs
 #     trace_to_chrome(file="parquet_trace.json", level="debug")
 
 #     scan_lance(
@@ -182,67 +191,91 @@ def measure_parquet_time(
 #             byte_range = event["args"]["range"]
 #             start, end = byte_range.split("..")
 #             total_bytes += int(end) - int(start)
-    
+
 #     print(f"IOs: {num_ios}")
 #     print(f"Bytes: {total_bytes}")
 
 COLUMN_SETS = [
     # Scalar columns
+    ["id"],
     # Vector columns
+    ["vec"],
     # Image columns
+    ["img"],
 ]
 
 # TODO: Tune these to target specific selectivities [0.1, 0.25, 0.5, 0.75, 0.9]
 MIN_VALUE = [
-
+    100,
+    250,
+    500,
+    750,
+    900,
 ]
 
-def run_all(path: str, num_iters: int=10) -> None:
+
+def run_all(path: str, num_iters: int = 10) -> None:
     out_dir = f"./data/{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}"
     os.makedirs(out_dir)
 
     with open(out_dir + "/runtime_results.csv", "w") as f:
-        with csv.writer(f) as writer:
-            for columns, min_value in product(COLUMN_SETS, MIN_VALUE):
-                for lm in [True, False]:
-                    res = measure_lance_time(
-                        path=path,
-                        columns=columns,
-                        predicate=f"col > {min_value}",
-                        late_materialization=lm,
-                        num_iters=num_iters,
-                    )
-                    writer.writerow(res)
-                # TODO: measure_parquet_time with late_materialization=True
-                res = measure_parquet_time(
+        writer = csv.writer(f)
+        for columns, min_value in product(COLUMN_SETS, MIN_VALUE):
+            for lm in [True, False]:
+                res = measure_lance_time(
                     path=path,
                     columns=columns,
-                    predicate=f"col > {min_value}",
-                    late_materialization=False,
+                    predicate=f"id > {min_value}",
+                    late_materialization=lm,
                     num_iters=num_iters,
                 )
                 writer.writerow(res)
+            # TODO: measure_parquet_time with late_materialization=True
+            res = measure_parquet_time(
+                path=path,
+                columns=columns,
+                predicate=ds.field("id") > min_value,
+                late_materialization=False,
+                num_iters=num_iters,
+            )
+            writer.writerow(res)
 
     with open(out_dir + "/io_results.csv", "w") as f:
-        with csv.writer(f) as writer:
-            for columns, min_value in product(COLUMN_SETS, MIN_VALUE):
-                for lm in [True, False]:
-                    res = measure_lance_io(
-                        path=path,
-                        columns=columns,
-                        predicate=f"col > {min_value}",
-                        late_materialization=lm,
-                    )
-                    writer.writerow(res)
+        writer = csv.writer(f)
+        for columns, min_value in product(COLUMN_SETS, MIN_VALUE):
+            for late_materialization in [True, False]:
+                res = run_in_process(
+                    measure_lance_io,
+                    path=path,
+                    columns=columns,
+                    predicate=f"id > {min_value}",
+                    late_materialization=late_materialization,
+                )
+                writer.writerow(res)
 
 
+def run_in_process(func, *args, **kwargs):
+    q = multiprocessing.Queue()
+    p = multiprocessing.Process(
+        target=run_process_inner, args=(q, func, *args), kwargs=kwargs
+    )
+    p.start()
+    p.join()
+    return q.get()
 
+
+def run_process_inner(queue, func, *args, **kwargs):
+    result = func(*args, **kwargs)
+    queue.put(result)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    run_parser = parser.add_subparsers('run', help='run all experiments', dest='command')
-    one_parser = parser.add_subparsers('run_one', help='run one experiment', dest='command')
+    subparsers = parser.add_subparsers(
+        title="commands", help="sub-command help", dest="command"
+    )
+    run_parser = subparsers.add_parser("run", help="run all experiments")
+    one_parser = subparsers.add_parser("run_one", help="run one experiment")
 
     # Arguments for running all experiments
     run_parser.add_argument("--path", type=str, required=True)
@@ -255,8 +288,7 @@ if __name__ == "__main__":
     one_parser.add_argument("--late_materialization", action="store_true")
     one_parser.add_argument("--num_iters", type=int, default=10)
 
-    
     args = parser.parse_args()
-    
+
     if args.command == "run":
         run_all(args.path, args.num_iters)
