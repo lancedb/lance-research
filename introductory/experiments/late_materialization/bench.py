@@ -70,6 +70,8 @@ class IOResult(NamedTuple):
     columns: str
     predicate: str
     late_materialization: bool
+    num_rows: int
+    selectivity: float
     num_ios: int
     total_bytes: int
 
@@ -84,7 +86,7 @@ def measure_lance_io(
 
     # Enable tracing so we can record IOs
     guard = trace_to_chrome("lance_trace.json", "debug")
-    scan_lance(
+    num_rows = scan_lance(
         dataset,
         columns=columns,
         predicate=predicate,
@@ -109,6 +111,8 @@ def measure_lance_io(
         columns=",".join(columns),
         predicate=predicate,
         late_materialization=late_materialization,
+        num_rows=num_rows,
+        selectivity=num_rows / dataset.count_rows(),
         num_ios=num_ios,
         total_bytes=total_bytes,
     )
@@ -218,7 +222,7 @@ def measure_parquet_io(
     dataset = ds.dataset(path, format="parquet", filesystem=pa_fs.PyFileSystem(handler))
     dataset_alt = ds.dataset(path, format="parquet")
 
-    scan_parquet(
+    num_rows = scan_parquet(
         dataset,
         dataset_alt,
         columns=columns,
@@ -231,6 +235,8 @@ def measure_parquet_io(
         columns=",".join(columns),
         predicate=predicate,
         late_materialization=late_materialization,
+        num_rows=num_rows,
+        selectivity=num_rows / dataset.count_rows(),
         num_ios=handler.num_ios,
         total_bytes=handler.total_bytes,
     )
@@ -247,16 +253,16 @@ COLUMN_SETS = [
 
 # TODO: Tune these to target specific selectivities [0.1, 0.25, 0.5, 0.75, 0.9]
 MIN_VALUE = [
-    100,
-    250,
-    500,
-    750,
-    900,
+    10000,
+    25000,
+    50000,
+    75000,
+    90000,
 ]
 
 
 def run_all(path: str, num_iters: int = 10) -> None:
-    out_dir = f"./data/{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}"
+    out_dir = f"./data/{datetime.now().isoformat(timespec='seconds')}"
     os.makedirs(out_dir)
 
     with open(out_dir + "/runtime_results.csv", "w") as f:
@@ -288,6 +294,7 @@ def run_all(path: str, num_iters: int = 10) -> None:
     with open(out_dir + "/io_results.csv", "w") as f:
         writer = csv.writer(f)
         for columns, min_value in product(COLUMN_SETS, MIN_VALUE):
+            predicate = ds.field("id") > min_value
             for late_materialization in [True, False]:
                 res = run_in_process(
                     measure_lance_io,

@@ -81,12 +81,59 @@ To demonstrate the performance benefit, we measured early versus late materializ
 
 <!-- TODO: discuss effect of Parquet row group / page size on read amplification -->
 
-<!-- Chart 1: line chart. Color: Format, line shape: early vs late,
-       x-axis: filter selectivity, y-axis: runtime -->
+```{r}
+library(ggplot2)
 
-<!-- Chart 2: line chart. Color: Format, line shape: early vs late,
-       x-axis: filter selectivity, y-axis: bytes read -->
+data_dir <- "introductory/experiments/late_materialization/data/2023-12-29T15:09:32/"
+# data_dir <- "../experiments/late_materialization/data/2023-12-29T15:09:32/"
 
-<!-- TODO: discuss results -->
+runtime_results <- read.csv(paste0(data_dir, "runtime_results.csv"), header=FALSE)
+names(runtime_results) <- c("format", "columns", "predicate", "late_materialization", "num_rows", "selectivity", "runtime")
 
-This reduction of IO is important for three factors: (1) query latency, (2) cost, and (3) scalability. The reduction in query latency is shown directly in figure (**TODO**). The reduction in IOs has direct cost benefits in object storage systems like S3 that charge per request. A 40% reduction in requests translates directly into reduction in costs. Finally, reduced IO calls also means the throughput limits of the storage system aren't hit as soon, improving the ability to scale the system.
+io_results <- read.csv(paste0(data_dir, "io_results.csv"), header=FALSE)
+names(io_results) <- c("format", "columns", "predicate", "late_materialization", "num_rows", "selectivity", "num_ios", "total_bytes")
+```
+
+In @fig-late-mat-runtime, we compare the time to scan the dataset with filters of varying selectivity for Parquet and Lance. For Lance, we show early and late materialization to show the impact of late materialization. PyArrow's Parquet scanner does not have a late materialization implementation, so we do not show that here.
+
+```{r}
+#| label: fig-late-mat-runtime
+#| fig-cap: Time to scan single column with filter. The `id` column is a incrementing id. The `vec` column is a 768-dimensional vector. The `img` column is a 4KB binary blob.
+#| fig-height: 4
+ggplot(runtime_results, aes(color=format, linetype=late_materialization, x=selectivity, y=runtime)) +
+ geom_line() +
+ facet_wrap(~ columns, scales = "free_y") +
+ scale_x_continuous(label=scales::label_percent()) +
+ theme(legend.position = "bottom")
+```
+
+In @fig-late-mat-total-bytes, we compare the total bytes read during the scans performed above. For Parquet, we include a rudimentary late materialization implementation for comparison.
+
+```{r}
+#| label: fig-late-mat-total-bytes
+#| fig-cap: The total bytes read while scanning a single column with filter.
+#| fig-height: 4
+ggplot(io_results, aes(color=format, linetype=late_materialization, x=selectivity, y=total_bytes)) +
+ geom_line() +
+ facet_wrap(~ columns, scales = "free_y") +
+ scale_y_continuous(label=scales::label_bytes(unit="MB")) +
+ scale_x_continuous(label=scales::label_percent()) +
+ theme(legend.position = "bottom")
+```
+
+<!--
+In @fig-late-mat-num-ios, we compare the total number of IO calls performed during the scans performed above.
+
+```{r}
+#| label: fig-late-mat-num-ios
+#| fig-cap: The total number of IO calls made while scanning a single column with filter.
+#| fig-height: 4
+ggplot(io_results, aes(color=format, linetype=late_materialization, x=selectivity, y=num_ios)) +
+ geom_line() +
+ facet_wrap(~ columns, scales = "free_y") +
+ scale_x_continuous(label=scales::label_percent()) +
+ theme(legend.position = "bottom")
+```
+-->
+
+This reduction of IO is important for three factors: (1) query latency, (2) cost, and (3) scalability. The reduction in query latency is shown directly in @fig-late-mat-runtime. The reduction in IOs has direct cost benefits in object storage systems like S3 that charge per request. A 40% reduction in requests translates directly into reduction in costs. Finally, reduced IO calls also means the throughput limits of the storage system aren't hit as soon, improving the ability to scale the system.

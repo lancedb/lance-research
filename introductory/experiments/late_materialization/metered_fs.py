@@ -5,6 +5,7 @@ import pyarrow.fs as pa_fs
 
 
 class MeteredFSHandler(pa_fs.FileSystemHandler):
+    """A FileSystemHandler that counts the number of IOs and bytes read."""
     def __init__(self, fs):
         self.fs = fs
         self.num_ios = 0

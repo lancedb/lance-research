@@ -16,6 +16,7 @@ def scan_lance(
         columns=columns,
         filter=predicate,
         use_late_materialization=late_materialization,
+        use_stats=False,
     ).to_batches()
     num_rows = 0
     for batch in reader:
