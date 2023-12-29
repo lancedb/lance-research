@@ -1,0 +1,4 @@
+# TODO: fix version of pylance
+pylance
+pyarrow==14.0.1
+fsspec==2023.12.2

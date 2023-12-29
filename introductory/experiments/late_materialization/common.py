@@ -1,5 +1,7 @@
-import lance
 from typing import List
+
+import lance
+
 
 def scan_lance(
     ds: lance.LanceDataset,

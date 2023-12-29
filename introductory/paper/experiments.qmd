@@ -79,6 +79,8 @@ Late materialization is an engine optimization, and can be applied to any column
 
 To demonstrate the performance benefit, we measured early versus late materialization strategies in Lance and Parquet. The PyArrow Parquet implementation does not have a built-in late materialization code path, so we created a basic one. Because it is not optimized to be CPU-efficient, we focus on measurements of IO calls and bytes read to give a fair comparison. For Lance and the early-materialization of Parquet, we show the runtime as well.
 
+<!-- TODO: discuss effect of Parquet row group / page size on read amplification -->
+
 <!-- Chart 1: line chart. Color: Format, line shape: early vs late,
        x-axis: filter selectivity, y-axis: runtime -->
 
@@ -86,3 +88,5 @@ To demonstrate the performance benefit, we measured early versus late materializ
        x-axis: filter selectivity, y-axis: bytes read -->
 
 <!-- TODO: discuss results -->
+
+This reduction of IO is important for three factors: (1) query latency, (2) cost, and (3) scalability. The reduction in query latency is shown directly in figure (**TODO**). The reduction in IOs has direct cost benefits in object storage systems like S3 that charge per request. A 40% reduction in requests translates directly into reduction in costs. Finally, reduced IO calls also means the throughput limits of the storage system aren't hit as soon, improving the ability to scale the system.

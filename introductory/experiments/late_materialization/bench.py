@@ -1,26 +1,26 @@
 import argparse
 import csv
-from datetime import datetime
-from functools import partial
-from itertools import product
 import json
-from multiprocessing import Process
 import multiprocessing
 import os
 import time
+from datetime import datetime
+from itertools import product
 from typing import List, NamedTuple, Tuple
-import concurrent.futures
 
+import fsspec
 import lance
-from lance.lance import trace_to_chrome
-import pyarrow.parquet as pq
 import pyarrow.dataset as ds
-from fsspec.implementations.local import LocalFileSystem
+import pyarrow.fs as pa_fs
+import pyarrow.parquet as pq
+from lance.lance import trace_to_chrome
 
 from common import scan_lance
+from metered_fs import MeteredFSHandler
 
 
 class TimeResult(NamedTuple):
+    format: str
     columns: str
     predicate: str
     late_materialization: bool
@@ -53,6 +53,7 @@ def measure_lance_time(
         times.append(end - start)
 
     return TimeResult(
+        format="lance",
         columns=",".join(columns),
         predicate=predicate,
         late_materialization=late_materialization,
@@ -63,6 +64,7 @@ def measure_lance_time(
 
 
 class IOResult(NamedTuple):
+    format: str
     columns: str
     predicate: str
     late_materialization: bool
@@ -101,6 +103,7 @@ def measure_lance_io(
             total_bytes += int(end) - int(start)
 
     return IOResult(
+        format="lance",
         columns=",".join(columns),
         predicate=predicate,
         late_materialization=late_materialization,
@@ -153,6 +156,7 @@ def measure_parquet_time(
         times.append(end - start)
 
     return TimeResult(
+        format="parquet",
         columns=",".join(columns),
         predicate=predicate,
         late_materialization=late_materialization,
@@ -162,38 +166,32 @@ def measure_parquet_time(
     )
 
 
-# TODO: measured IOs for parquet
-# def measure_parquet_io(
-#     path: str,
-#     columns: List[str],
-#     predicate: str,
-#     late_materialization: bool,
-# ) -> Tuple[int, int]:
-#     ds = pq.ParquetDataset(path)
+def measure_parquet_io(
+    path: str,
+    columns: List[str],
+    predicate: str,
+    late_materialization: bool,
+) -> Tuple[int, int]:
+    handler = MeteredFSHandler(pa_fs.FSSpecHandler(fsspec.filesystem("file")))
+    path = os.path.abspath(os.path.join(path, "parquet"))
+    dataset = ds.dataset(path, format="parquet", filesystem=pa_fs.PyFileSystem(handler))
 
-#     # Enable tracing so we can record IOs
-#     trace_to_chrome(file="parquet_trace.json", level="debug")
+    scan_parquet(
+        dataset,
+        columns=columns,
+        predicate=predicate,
+        late_materialization=late_materialization,
+    )
 
-#     scan_lance(
-#         ds,
-#         columns=columns,
-#         filter=predicate,
-#         late_materialization=late_materialization,
-#     )
+    return IOResult(
+        format="parquet",
+        columns=",".join(columns),
+        predicate=predicate,
+        late_materialization=late_materialization,
+        num_ios=handler.num_ios,
+        total_bytes=handler.total_bytes,
+    )
 
-#     with open("parquet_trace.json") as f:
-#         trace = json.load(f)
-#     num_ios = 0
-#     total_bytes = 0
-#     for event in trace:
-#         if event["name"] == "get_range":
-#             num_ios += 1
-#             byte_range = event["args"]["range"]
-#             start, end = byte_range.split("..")
-#             total_bytes += int(end) - int(start)
-
-#     print(f"IOs: {num_ios}")
-#     print(f"Bytes: {total_bytes}")
 
 COLUMN_SETS = [
     # Scalar columns
@@ -221,11 +219,12 @@ def run_all(path: str, num_iters: int = 10) -> None:
     with open(out_dir + "/runtime_results.csv", "w") as f:
         writer = csv.writer(f)
         for columns, min_value in product(COLUMN_SETS, MIN_VALUE):
+            predicate = ds.field("id") > min_value
             for lm in [True, False]:
                 res = measure_lance_time(
                     path=path,
                     columns=columns,
-                    predicate=f"id > {min_value}",
+                    predicate=predicate,
                     late_materialization=lm,
                     num_iters=num_iters,
                 )
@@ -234,7 +233,7 @@ def run_all(path: str, num_iters: int = 10) -> None:
             res = measure_parquet_time(
                 path=path,
                 columns=columns,
-                predicate=ds.field("id") > min_value,
+                predicate=predicate,
                 late_materialization=False,
                 num_iters=num_iters,
             )
@@ -248,10 +247,18 @@ def run_all(path: str, num_iters: int = 10) -> None:
                     measure_lance_io,
                     path=path,
                     columns=columns,
-                    predicate=f"id > {min_value}",
+                    predicate=predicate,
                     late_materialization=late_materialization,
                 )
                 writer.writerow(res)
+
+            res = measure_parquet_io(
+                path=path,
+                columns=columns,
+                predicate=predicate,
+                late_materialization=late_materialization,
+            )
+            writer.writerow(res)
 
 
 def run_in_process(func, *args, **kwargs):
