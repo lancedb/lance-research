@@ -55,7 +55,7 @@ def measure_lance_time(
         times.append(end - start)
 
     return TimeResult(
-        format="lance",
+        format="Lance",
         columns=",".join(columns),
         predicate=predicate,
         late_materialization=late_materialization,
@@ -107,7 +107,7 @@ def measure_lance_io(
             total_bytes += int(end) - int(start)
 
     return IOResult(
-        format="lance",
+        format="Lance",
         columns=",".join(columns),
         predicate=predicate,
         late_materialization=late_materialization,
@@ -120,15 +120,12 @@ def measure_lance_io(
 
 def scan_parquet(
     ds: pq.ParquetDataset,
-    alt_ds: Optional[pq.ParquetDataset],
     columns: List[str],
     predicate: str,
     late_materialization: bool,
 ) -> int:
     if late_materialization:
-        if alt_ds is None:
-            raise ValueError("alt_ds must be specified for late materialization")
-        return scan_parquet_late(ds, alt_ds, columns, predicate)
+        return scan_parquet_late(ds, columns, predicate)
     else:
         return scan_parquet_early(ds, columns, predicate)
 
@@ -150,7 +147,6 @@ def scan_parquet_early(
 
 def scan_parquet_late(
     ds: pq.ParquetDataset,
-    alt_ds: pq.ParquetDataset,
     columns: List[str],
     predicate: str,
 ) -> int:
@@ -162,15 +158,10 @@ def scan_parquet_late(
 
     num_rows = 0
     for batch in reader:
+        if batch.num_rows == 0:
+            continue
         num_rows += batch.num_rows
-
-    # Second pass, do the projection with take. We use the alternate dataset
-    # so that the row ids don't count towards are IO counts.
-    reader = alt_ds.scanner(
-        columns=["id"],
-        filter=predicate,
-    ).to_batches()
-    for batch in reader:
+        # TODO: this is terribly inefficient. We might need to switch to Rust Parquet.
         ds.take(batch["id"], columns=columns)
 
     return num_rows
@@ -192,7 +183,6 @@ def measure_parquet_time(
         start = time.perf_counter()
         num_res = scan_parquet(
             dataset,
-            None,
             columns=columns,
             predicate=predicate,
             late_materialization=late_materialization,
@@ -201,7 +191,7 @@ def measure_parquet_time(
         times.append(end - start)
 
     return TimeResult(
-        format="parquet",
+        format="Parquet",
         columns=",".join(columns),
         predicate=predicate,
         late_materialization=late_materialization,
@@ -220,18 +210,16 @@ def measure_parquet_io(
     handler = MeteredFSHandler(pa_fs.FSSpecHandler(fsspec.filesystem("file")))
     path = os.path.abspath(os.path.join(path, "parquet"))
     dataset = ds.dataset(path, format="parquet", filesystem=pa_fs.PyFileSystem(handler))
-    dataset_alt = ds.dataset(path, format="parquet")
 
     num_rows = scan_parquet(
         dataset,
-        dataset_alt,
         columns=columns,
         predicate=predicate,
         late_materialization=late_materialization,
     )
 
     return IOResult(
-        format="parquet",
+        format="Parquet",
         columns=",".join(columns),
         predicate=predicate,
         late_materialization=late_materialization,
@@ -338,7 +326,7 @@ if __name__ == "__main__":
     one_parser = subparsers.add_parser("run_one", help="run one experiment")
 
     # Arguments for running all experiments
-    run_parser.add_argument("--path", type=str, required=True)
+    run_parser.add_argument("--path", type=str, default="./test_data")
     run_parser.add_argument("--num_iters", type=int, default=10)
 
     # Arguments for running one experiment
