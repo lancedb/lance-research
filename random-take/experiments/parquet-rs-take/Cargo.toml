@@ -1,0 +1,29 @@
+[package]
+name = "parquet-rs-take"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+arrow-array = "49.0.0"
+arrow-schema = "49.0.0"
+futures = "0.3.29"
+lance = "0.9.1"
+parquet = { version = "49.0.0", features = ["async"] }
+tokio = { version = "1.35.1", features = [
+    "rt-multi-thread",
+    "macros",
+    "io-util",
+    "io-std",
+    "fs",
+] }
+
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["async", "tokio", "async_tokio"] }
+glob = "0.3.1"
+rand = "0.8.5"
+
+[[bench]]
+name = "random_take"
+harness = false
