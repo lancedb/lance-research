@@ -1,0 +1,5 @@
+duckdb==0.9.0
+lance # TODO
+pyarrow==14.0.1
+pytest==7.4.3
+pytest-benchmark==4.0.0
