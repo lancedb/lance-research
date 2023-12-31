@@ -5,3 +5,64 @@
 Based on experiments in [@zeng2023empirical].
 
 ## Scanning
+
+
+### Overall scan performance
+
+To provide an overall idea of performance while scanning, we compare Lance to Parquet for two datasets. One is the first 1.8 million rows of the Laion-5B dataset and the other is the `lineitem` table from the TPC-H dataset (with scale factor 10). The Laion dataset includes the vector embedding as a column in the data. The Laion dataset represents a computer vision dataset, while the TPC-H lineitem table represents a typical OLAP dataset.
+
+The first relevant factor in the scan performance is on-disk size, since this determines how much IO must be performed to scan the full table. The sizes are shown in @fig-dataset-size. In both cases, Lance is substantially larger than Parquet. This is because Lance does not currently implement any encodings or compression which might reduce the on-disk size, unlike Parquet. This size difference is especially pronounced for the TCP-H dataset, which largely has data types that are highly compressible. Laion dataset is does not benefit nearly as much from compression because much of the dataset size comes from the vector embedding column, which has been found in @zeng2023empirical to be difficult to compress.
+
+<!-- TODO: we should note the compression type for Parquet and version of the writer in a footnote. -->
+
+```{r, warning=FALSE, message=FALSE}
+library(gt)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+# data <- read.csv("introductory/experiments/overall_scans/results.csv")
+data <- read.csv("../experiments/overall_scans/results.csv")
+
+data$format <- tools::toTitleCase(data$format)
+data$dataset <- ifelse(data$dataset == "laion", "Laion", "TPC-H lineitem")
+```
+
+
+```{r}
+#| label: fig-dataset-size
+#| fig-cap: Size of datasets used in scan benchmarks
+data |>
+    filter(row_group_size == 102400) |>
+    select(dataset, format, dataset_size_bytes) |>
+    mutate(dataset_size_bytes = dataset_size_bytes / 1024 / 1024 / 1024) |>
+    pivot_wider(names_from = format, values_from = dataset_size_bytes) |>
+    mutate(Ratio = Lance / Parquet) |>
+    gt(rowname_col = "dataset") |>
+    tab_spanner(
+        label="On-disk size (GB)",
+        columns=c("Lance", "Parquet")
+    ) |>
+    fmt_number(
+        columns = c("Lance", "Parquet", "Ratio"),
+        decimals = 1
+    )
+```
+
+The relative performance of scans in Lance verus Parquet varies between the datasets. For the TPC-H dataset, Lance is a little over 2x slower than Parquet. This is likely simply due to the relative on-disk size. Meanwhile in the Laion dataset, Lance is 2x faster than Parquet, likely due to it's more efficient decoding of the vector column.
+
+It's worth noting that Lance's default setting is for row group size of 1024. With this setting, the TPC-H scan performance was substantially worse. This default setting is used since many Lance datasets have some wide columns such as images, where buffering more than 1024 rows before flushing to disk would mean excessive memory overhead. However, given this performance hit for scalar columns, future work may be necesary to decouple the page size of wide and small columns to allow for better OLAP scan performance while still maintaining reasonable memory requirements when writing data.
+
+```{r}
+#| label: fig-full-scan-runtime
+#| fig-cap: Time to scan full datasets.
+#| fig-height: 4
+#| fig-width: 5
+ggplot(data, aes(x = format, y = scan_time)) +
+    geom_col() +
+    facet_grid(dataset ~ row_group_size, labeller = "label_both") +
+    labs(
+      x="Format",
+      y="Runtime (s)",
+     )
+```

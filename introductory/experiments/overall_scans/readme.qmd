@@ -1,7 +1,8 @@
 ---
 title: "Scans in Lance"
 format: gfm
-jupyter: python3
+execute: 
+  echo: false
 ---
 
 These benchmarks demonstrate overall performance while scanning Lance files. These give a high-level idea of how Lance can perform against other formats in current libraries. However, it does not necessarily demonstrate that there are no optimizations that could make Lance as fast as Parquet, or vice-versa. We try to discuss those potential obersavtion when they are obvious. However, this does give a good idea of the state of scanning library right now, which is what end users care about most.
@@ -19,3 +20,50 @@ The combination of these points to two pieces of future work needed to make Lanc
 
 1. Add encodings for integer-based data such as RLE and bitpacking.
 2. Find a way to de-couple page sizes of wide and narrow columns, so that we can use larger pages for scalar columns, while keeping the shorter pages for wide columns.
+
+
+### Dataset Size
+
+| Dataset               | Lance Size (GB) | Parquet Size (GB) | Ratio |
+| --------------------- | --------------- | ----------------- | ----- |
+| TPC-H (10) `lineitem` |             9.9 |               2.5 |  4.0x |
+| Laion (1M)            |             6.1 |               2.9 |  2.1x |
+
+
+### Scan time
+
+
+```{r}
+library(ggplot2)
+
+data <- read.csv("introductory/experiments/overall_scans/results.csv")
+
+data$format <- tools::toTitleCase(data$format)
+
+data$dataset <- ifelse(data$dataset == "laion", "Laion (1.8M)", "TPC-H(SF=10) lineitem")
+
+ggplot(data[data$row_group_size == 102400,], aes(x = format, y = dataset_size_bytes)) +
+    geom_col() +
+    facet_wrap(~ dataset) + 
+    scale_y_continuous(label=scales::label_bytes(unit="MB"))
+```
+
+
+```{r}
+ggplot(data, aes(x = format, y = scan_time)) +
+    geom_col() +
+    facet_grid(dataset ~ row_group_size, labeller = "label_both") +
+    labs(
+      x="Format",
+      y="Runtime (s)",
+     )
+```
+
+
+
+## Development
+
+<!-- TODO: how to run all this -->
+
+Commands to generate data, run the benchmarks, and build the report are in the
+`Makefile`.
