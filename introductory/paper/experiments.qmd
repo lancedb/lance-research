@@ -9,11 +9,11 @@ Based on experiments in [@zeng2023empirical].
 
 ### Overall scan performance
 
-To provide an overall idea of performance while scanning, we compare Lance to Parquet for two datasets. One is the first 1.8 million rows of the Laion-5B dataset and the other is the `lineitem` table from the TPC-H dataset (with scale factor 10). The Laion dataset includes the vector embedding as a column in the data. The Laion dataset represents a computer vision dataset, while the TPC-H lineitem table represents a typical OLAP dataset.
+To provide an overall idea of performance while scanning, we compare Lance to Parquet [^parquet-scan-note] for two datasets. One is the first 1.8 million rows of the Laion-5B dataset, including a vector embedding column. The other is the `lineitem` table from the TPC-H dataset (with scale factor 10). The Laion dataset represents a typical computer vision dataset, while the TPC-H lineitem table represents a typical OLAP dataset.
 
-The first relevant factor in the scan performance is on-disk size, since this determines how much IO must be performed to scan the full table. The sizes are shown in @fig-dataset-size. In both cases, Lance is substantially larger than Parquet. This is because Lance does not currently implement any encodings or compression which might reduce the on-disk size, unlike Parquet. This size difference is especially pronounced for the TCP-H dataset, which largely has data types that are highly compressible. Laion dataset is does not benefit nearly as much from compression because much of the dataset size comes from the vector embedding column, which has been found in @zeng2023empirical to be difficult to compress.
+[^parquet-scan-note]: The Parquet implementation we used to scan is PyArrow 14.0.1. The `lineitem` files were written with DuckDB 0.9.0, using default settings (SNAPPY compression). The Laion dataset was written with PyArrow.
 
-<!-- TODO: we should note the compression type for Parquet and version of the writer in a footnote. -->
+The first relevant factor in the scan performance is on-disk size, since this determines how much IO must be performed to scan the full table. The sizes are shown in @fig-dataset-size. In both cases, Lance is substantially larger than Parquet. This is because Lance does not currently implement any encodings or compression which might reduce the on-disk size. This size difference is especially pronounced for the TCP-H dataset, which largely has data types that are highly compressible. Laion dataset is does not benefit nearly as much from compression because much of the dataset size comes from the vector embedding column, which has been found in @zeng2023empirical to be difficult to compress.
 
 ```{r, warning=FALSE, message=FALSE}
 library(gt)
