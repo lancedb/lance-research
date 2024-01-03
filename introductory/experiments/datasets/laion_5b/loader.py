@@ -88,7 +88,8 @@ def load_embedding(shard_number: int, params: DownloadParams):
     embedding_arr = np.load(embedding_path)
     # The laion-5B dataset uses float16 for embeddings.  Parquet does not support this and
     # so we convert to float32
-    embedding_arr = embedding_arr.astype(np.single)
+    # Can comment this out if using PyArrow 15.0.0 (or nightly right as of this comment)
+    # embedding_arr = embedding_arr.astype(np.single)
     width = embedding_arr.shape[1]
     embedding_arr.shape = -1
     return pa.FixedSizeListArray.from_arrays(embedding_arr, width)
