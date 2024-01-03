@@ -72,21 +72,16 @@ class TPCHGenerator(DatasetGenerator):
             duckdb.sql("CALL dbgen(sf = 10)")
 
     def write_parquet(self, path, row_group_size):
-        if row_group_size <= 1024:
-            logging.warning(
-                "Skipping Parquet generation for row_group_size <= 1K, as it causes OOM for DuckDB."
-            )
-            return
-
         logging.info(
             "Writing TPCH dataset to Parquet (group_size = %s)",
             size_to_str(row_group_size),
         )
         with time_log():
-            # DuckDB doesn't create the directory for us
-            os.makedirs(path)
-            duckdb.sql(
-                f"COPY lineitem TO '{path}/data.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE {row_group_size})"
+            reader = duckdb.sql("SELECT * FROM lineitem").fetch_arrow_reader(
+                row_group_size
+            )
+            ds.write_dataset(
+                reader, path, format="parquet", max_rows_per_group=row_group_size
             )
 
     def write_lance(self, path, row_group_size):

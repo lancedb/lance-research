@@ -25,6 +25,13 @@ brew install font-latin-modern
 brew install font-latin-modern-math
 ```
 
+To build the plots and tables in the paper, you will need to install R and a few
+R packages. The R packages can be installed in an R session with:
+
+```r
+install.packages(c("gt", "ggplot2", "tidyr", "dplyr", "rmarkdown"))
+```
+
 ## Building the paper
 
 The paper can be built with:
