@@ -1,3 +1,4 @@
+"""Convert benchmark data output by pytest-benchmark into a CSV file."""
 import json
 import csv
 import argparse
@@ -35,6 +36,7 @@ def iter_dataset_sizes():
                 dataset_size_bytes=size,
             )
 
+
 def iter_benchmark_data(path):
     with open(path) as f:
         results = json.load(f)
@@ -46,13 +48,19 @@ def iter_benchmark_data(path):
             dataset=benchmark["group"],
             format=format,
             row_group_size=row_group_size,
-            benchmark=benchmark
+            benchmark=benchmark,
         )
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("data", type=str)
+    parser.add_argument("--data", type=str)
     args = parser.parse_args()
+
+    if args.data is None:
+        # Get the latest benchmark data, if not specified
+        benches_directory = os.path.join(".benchmarks", os.listdir(".benchmarks")[0])
+        args.data = os.path.join(benches_directory, os.listdir(benches_directory)[-1])
 
     # We need to join to the benchmark data with (dataset, format, row_group_size)
     dataset_meta = {
@@ -62,9 +70,13 @@ if __name__ == "__main__":
 
     with open("results.csv", "w") as f:
         writer = csv.writer(f)
-        writer.writerow(["dataset", "format", "row_group_size", "dataset_size_bytes", "scan_time"])
+        writer.writerow(
+            ["dataset", "format", "row_group_size", "dataset_size_bytes", "scan_time"]
+        )
         for benchmark in iter_benchmark_data(args.data):
-            meta = dataset_meta[(benchmark["dataset"], benchmark["format"], benchmark["row_group_size"])]
+            meta = dataset_meta[
+                (benchmark["dataset"], benchmark["format"], benchmark["row_group_size"])
+            ]
 
             group_size = benchmark["row_group_size"]
             if group_size.endswith("K"):
@@ -77,6 +89,6 @@ if __name__ == "__main__":
                 format=benchmark["format"],
                 row_group_size=group_size,
                 dataset_size_bytes=meta["dataset_size_bytes"],
-                scan_time=benchmark["benchmark"]["stats"]["min"]
+                scan_time=benchmark["benchmark"]["stats"]["min"],
             )
             writer.writerow(row)

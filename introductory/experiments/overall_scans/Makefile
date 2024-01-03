@@ -5,7 +5,10 @@ setup:
 	pip install -r requirements.txt
 .PHONY: setup
 
-# Generate the TPC-H data.
+# Generate the datasets.
+#
+# The Laion dataset requires the environment variable `LAION_1M_DATA` to be set
+# to the path of the downloaded data in ../datasets/laion_5b/loader.py.
 datagen:
 	python datagen.py --verbose
 .PHONY: datagen
@@ -13,6 +16,7 @@ datagen:
 # Run the benchmarks.
 bench:
 	pytest bench.py -v --benchmark-save=data
+	python postprocess.py
 .PHONY: bench
 
 # Build the GH Markdown file.

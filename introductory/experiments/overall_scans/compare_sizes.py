@@ -16,26 +16,23 @@ def get_size(start_path):
     return total_size
 
 
-# with tempfile.TemporaryDirectory() as tmpdir:
-#     dataset = lance.dataset("data/laion/lance-100K")
-#     lance.write_dataset(dataset.scanner(columns=["vector"]), tmpdir)
-#     print("Lance size: {}GB".format(get_size(tmpdir) / 1024 / 1024 / 1024)) # 5.3GB
-
-#5.3 GB
+with tempfile.TemporaryDirectory() as tmpdir:
+    dataset = lance.dataset("data/laion/lance-100K")
+    lance.write_dataset(dataset.scanner(columns=["vector"]), tmpdir)
+    print("Lance size: {}GB".format(get_size(tmpdir) / 1024 / 1024 / 1024))
 
 with tempfile.TemporaryDirectory() as tmpdir:
     dataset = ds.dataset("data/laion/parquet-100K", format="parquet")
+    # Note: byte_stream_split doesn't apply to f16.
     opts = ds.ParquetFileFormat().make_write_options(
-        compression="none",
-        use_byte_stream_split=True
+        compression="snappy", use_byte_stream_split=True
     )
-    ds.write_dataset(dataset.scanner(columns=["vector"]), tmpdir, format="parquet", file_options=opts)
-    #2.5GB w/o byte_stream_split
-    print("Parquet size: {}GB".format(get_size(tmpdir) / 1024 / 1024 / 1024)) 
+    ds.write_dataset(
+        dataset.scanner(columns=["vector"]), tmpdir, format="parquet", file_options=opts
+    )
+    print("Parquet size: {}GB".format(get_size(tmpdir) / 1024 / 1024 / 1024))
 
-    # min: -0.54296875
-    # max: 0.58056640625
-
-    path = os.path.join(tmpdir, os.listdir(tmpdir)[0])
-    f = pq.ParquetFile(path)
-    print(f.metadata.row_group(0).column(0))
+    # If we want to look at the metadata:
+    # path = os.path.join(tmpdir, os.listdir(tmpdir)[0])
+    # f = pq.ParquetFile(path)
+    # print(f.metadata.row_group(0).column(0))
