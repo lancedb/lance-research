@@ -60,7 +60,8 @@ if __name__ == "__main__":
     if args.data is None:
         # Get the latest benchmark data, if not specified
         benches_directory = os.path.join(".benchmarks", os.listdir(".benchmarks")[0])
-        args.data = os.path.join(benches_directory, os.listdir(benches_directory)[-1])
+        args.data = os.path.join(benches_directory, sorted(os.listdir(benches_directory))[-1])
+        print("Using latest benchmark data: {}".format(args.data))
 
     # We need to join to the benchmark data with (dataset, format, row_group_size)
     dataset_meta = {

@@ -73,7 +73,9 @@ class TPCHGenerator(DatasetGenerator):
 
     def write_parquet(self, path, row_group_size):
         if row_group_size <= 1024:
-            logging.warning("Skipping Parquet generation for row_group_size <= 1K, as it causes OOM for DuckDB.")
+            logging.warning(
+                "Skipping Parquet generation for row_group_size <= 1K, as it causes OOM for DuckDB."
+            )
             return
 
         logging.info(
