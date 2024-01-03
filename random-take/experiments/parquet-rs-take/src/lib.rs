@@ -1,10 +1,13 @@
 use arrow_array::RecordBatch;
-use parquet::arrow::{
-    arrow_reader::{
-        ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder, RowSelection,
-        RowSelector,
+use parquet::{
+    arrow::{
+        arrow_reader::{
+            ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder, RowSelection,
+            RowSelector,
+        },
+        ProjectionMask,
     },
-    ProjectionMask,
+    file::reader::ChunkReader,
 };
 use std::fs::File;
 
@@ -47,8 +50,8 @@ impl<'a, I: Iterator<Item = &'a u32>> Iterator for IndicesToRowSelection<'a, I> 
     }
 }
 
-pub fn take_task(
-    file: File,
+pub fn take_task<T: ChunkReader + 'static>(
+    file: T,
     metadata: ArrowReaderMetadata,
     row_group_number: u32,
     row_indices: &[u32],
@@ -104,15 +107,33 @@ pub fn take_task(
     }
 }
 
-pub fn take(
-    file: File,
+pub trait TryClone {
+    fn try_clone(&self) -> std::io::Result<Self>
+    where
+        Self: Sized;
+}
+
+impl TryClone for File {
+    fn try_clone(&self) -> std::io::Result<Self>
+    where
+        Self: Sized,
+    {
+        self.try_clone()
+    }
+}
+
+pub fn take<T: ChunkReader + TryClone + 'static>(
+    file: T,
     row_indices: &[u32],
     column_indices: &[u32],
     use_selection: bool,
+    metadata: Option<ArrowReaderMetadata>,
 ) -> Vec<RecordBatch> {
     std::thread::scope(|scope| {
-        let options = ArrowReaderOptions::new().with_page_index(true);
-        let metadata = ArrowReaderMetadata::load(&file, options).unwrap();
+        let metadata = metadata.unwrap_or_else(|| {
+            let options = ArrowReaderOptions::new().with_page_index(true);
+            ArrowReaderMetadata::load(&file, options).unwrap()
+        });
         (0..metadata.metadata().num_row_groups())
             .map(|row_group_number| {
                 let file = file.try_clone().unwrap();
@@ -146,7 +167,7 @@ mod tests {
         let path_str = "/tmp/bench_input_50000.parquet";
         let path = Path::new(path_str);
         let file = OpenOptions::new().read(true).open(path).unwrap();
-        take(file, &[1], &[3], true);
+        take(file, &[1], &[3], true, None);
     }
 
     #[tokio::test]
@@ -154,6 +175,6 @@ mod tests {
         let path_str = "/tmp/bench_input_50000.parquet";
         let path = Path::new(path_str);
         let file = OpenOptions::new().read(true).open(path).unwrap();
-        take(file, &[1], &[3], false);
+        take(file, &[1], &[3], false, None);
     }
 }
