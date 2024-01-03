@@ -1,7 +1,36 @@
 # Experiments
 
-## Random access
+## Scattered Access
 
-Based on experiments in [@zeng2023empirical].
+A "take" operation is a common file operation that selects rows from a file by row number.  This operation is
+common when using secondary indices, which are indices that do not require the data to be ordered in any
+particular way, and are typically stored separate from the data itself.  An indexed search first consults the
+index to find the row number (or some other address) of the rows that satisfy the search criteria.  These row
+numbers are then used to retrieve the rows of interest from the file.  This experiment is similar to the 
+"Integration with Vector Search Pipeline" experiment from [@zeng2023empirical].
+
+If the row numbers are scattered throughout the file then the take operation tests the file format's ability
+to support small random access into the file.  This is something that columnar formats have traditionally
+struggled with since an emphasis on encodings and compression increases the amount of data that must be fetched
+to read a single cell.  As discussed earlier, Lance has been designed to prioritize this operation by ensuring
+that random access to rows remains possible without requiring complex decoding.
+
+We evaluate Lance's performance on this type of operation by selecting K rows at random from a single file
+containing the first million rows of the laion-5b english dataset.  We retrieve a single column of data.  This
+column is either the similarity column (an 8-byte double value) or the image embedding (a fixed size list where
+each value is a vector with 768 2-byte fp16 values).  We consider both the cold-start case, where the metadata
+and the data must be fetched from disk and the warm-start case where the metadata is cached in memory.
+
+One challenge we encountered is that parquet libraries do not have builtin support for this type of operation.
+We created a custom take routine for both parquet-rs and parquet-cpp.  The source code for this routine is
+available at ?.  To emulate lance we created a thread task per row group.  Parquet files were written without
+compression and with 100,000 rows per row group as we found these settings to perform best.  Latency
+measurements are averaged across 1,000 runs.  I/O measurements are representative samples, since the actual I/O
+required varied slightly based on row id selection.
+
+The results are in figure ?.  The lance format has significatly lower latency than parquet in all situations.
+The overhead of loading and parsing the file metadata is considerable in both formats, especially when loading
+8-byte values.  When running parquet on a fast disk the I/O does not correlate with the latency.  This suggests
+that the CPU overhead is the bottleneck.  Lance's relatively simple encodings help it to avoid this situation.
 
 ## Scanning
