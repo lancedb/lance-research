@@ -1,5 +1,5 @@
 use std::{
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     process::Command,
     sync::{atomic::AtomicBool, Arc},
     time::{Duration, SystemTime},
@@ -20,13 +20,15 @@ use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
 use parquet::{
     arrow::{
         arrow_reader::{ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder},
+        async_reader::AsyncFileReader,
         AsyncArrowWriter,
     },
     basic::Compression,
     file::{properties::WriterProperties, reader::ChunkReader},
 };
-use parquet_rs_take::TryClone;
 use rand::seq::SliceRandom;
+use random_take_bench::r#async::{take as async_take, TryClone as AsyncTryClone};
+use random_take_bench::sync::{take as sync_take, TryClone as SyncTryClone};
 use url::Url;
 
 /// Simple program to greet a person
@@ -51,6 +53,9 @@ struct Args {
 
     #[arg(short, long, default_value_t = false)]
     cache_metadata: bool,
+
+    #[arg(short, long, default_value_t = false)]
+    r#async: bool,
 
     /// Path to the test file
     src: String,
@@ -108,6 +113,7 @@ async fn parquet_global_setup(args: &Args, work_store: &dyn ObjectStore, work_di
     let dest_path = parquet_path(work_dir, args.row_group_size);
     if work_store.exists(&dest_path).await.unwrap() {
         log(format!("Using existing parquet test file at {}", dest_path));
+        return;
     }
 
     log(format!("Creating new parquet test file at {}", dest_path));
@@ -135,11 +141,11 @@ async fn parquet_global_setup(args: &Args, work_store: &dyn ObjectStore, work_di
     writer.close().await.unwrap();
 }
 
-fn parquet_setup(
+fn parquet_setup_sync(
     args: &Args,
     _: &dyn ObjectStore,
     work_dir: &Path,
-) -> (File, Vec<u32>, Option<ArrowReaderMetadata>) {
+) -> (std::fs::File, Vec<u32>, Option<ArrowReaderMetadata>) {
     // TODO: Handle S3
     let path_str = format!("/{}", parquet_path(work_dir, args.row_group_size));
     Command::new("dd")
@@ -151,7 +157,7 @@ fn parquet_setup(
         .unwrap();
 
     let path = std::path::Path::new(&path_str);
-    let file = OpenOptions::new().read(true).open(path).unwrap();
+    let file = std::fs::OpenOptions::new().read(true).open(path).unwrap();
 
     let options = ArrowReaderOptions::new().with_page_index(true);
     let metadata = ArrowReaderMetadata::load(&file, options).unwrap();
@@ -177,16 +183,73 @@ fn parquet_setup(
     (file, indices, metadata)
 }
 
-fn parquet_random_take<T: ChunkReader + TryClone + 'static>(
+async fn parquet_setup_async(
+    args: &Args,
+    _: &dyn ObjectStore,
+    work_dir: &Path,
+) -> (tokio::fs::File, Vec<u32>, Option<ArrowReaderMetadata>) {
+    // TODO: Handle S3
+    let path_str = format!("/{}", parquet_path(work_dir, args.row_group_size));
+    Command::new("dd")
+        .arg(format!("of={}", path_str))
+        .arg("oflag=nocache")
+        .arg("conv=notrunc,fdatasync")
+        .arg("count=0")
+        .output()
+        .unwrap();
+
+    let path = std::path::Path::new(&path_str);
+    let mut file = tokio::fs::OpenOptions::new()
+        .read(true)
+        .open(path)
+        .await
+        .unwrap();
+
+    let options = ArrowReaderOptions::new().with_page_index(true);
+    let metadata = ArrowReaderMetadata::load_async(&mut file, options)
+        .await
+        .unwrap();
+    let num_rows = metadata
+        .metadata()
+        .row_groups()
+        .iter()
+        .map(|rg| rg.num_rows())
+        .sum::<i64>();
+
+    let metadata = if args.cache_metadata {
+        Some(metadata)
+    } else {
+        None
+    };
+
+    let mut rng = rand::thread_rng();
+    let mut indices = (0..num_rows as u32).collect::<Vec<u32>>();
+    let (permuted, _) = indices.partial_shuffle(&mut rng, args.take_size as usize);
+    let mut indices = Vec::from(permuted);
+    indices.sort();
+
+    (file, indices, metadata)
+}
+
+fn parquet_random_take_sync<T: ChunkReader + SyncTryClone + 'static>(
     file: T,
     indices: Vec<u32>,
     metadata: Option<ArrowReaderMetadata>,
     col: u32,
 ) {
-    log("Bench start");
-    let batches = parquet_rs_take::take(file, &indices, &[col], true, metadata);
+    let batches = sync_take(file, &indices, &[col], true, metadata);
     let num_rows = batches.iter().map(|batch| batch.num_rows()).sum::<usize>();
-    log("Bench end");
+    assert_eq!(num_rows, indices.len());
+}
+
+async fn parquet_random_take_async<T: AsyncFileReader + Unpin + AsyncTryClone + 'static>(
+    file: &mut T,
+    indices: Vec<u32>,
+    metadata: Option<ArrowReaderMetadata>,
+    col: u32,
+) {
+    let batches = async_take(file, &indices, &[col], true, metadata).await;
+    let num_rows = batches.iter().map(|batch| batch.num_rows()).sum::<usize>();
     assert_eq!(num_rows, indices.len());
 }
 
@@ -194,10 +257,18 @@ async fn bench_parquet(args: &Args, work_store: &dyn ObjectStore, work_dir: &Pat
     parquet_global_setup(args, work_store, work_dir).await;
     let mut total_duration = Duration::from_nanos(0);
     for _ in 0..args.iterations {
-        let (file, indices, metadata) = parquet_setup(args, work_store, work_dir);
-        let start = SystemTime::now();
-        parquet_random_take(file, indices, metadata, args.column_index());
-        total_duration += start.elapsed().unwrap();
+        if args.r#async {
+            let (mut file, indices, metadata) =
+                parquet_setup_async(args, work_store, work_dir).await;
+            let start = SystemTime::now();
+            parquet_random_take_async(&mut file, indices, metadata, args.column_index()).await;
+            total_duration += start.elapsed().unwrap();
+        } else {
+            let (file, indices, metadata) = parquet_setup_sync(args, work_store, work_dir);
+            let start = SystemTime::now();
+            parquet_random_take_sync(file, indices, metadata, args.column_index());
+            total_duration += start.elapsed().unwrap();
+        }
     }
     (total_duration.as_nanos() as f64 / (1000.0 * 1000.0)) / args.iterations as f64
 }
@@ -319,9 +390,7 @@ async fn bench_lance(args: &Args, work_store: Arc<dyn ObjectStore>, work_dir: &P
     for _ in 0..args.iterations {
         let (dataset, indices) = lance_setup(&dataset, args, work_store.clone(), work_dir).await;
         let start = SystemTime::now();
-        log("Bench start");
         lance_random_take(&dataset, indices, args.column_index()).await;
-        log("Bench end");
         total_duration += start.elapsed().unwrap();
     }
     (total_duration.as_nanos() as f64 / (1000.0 * 1000.0)) / args.iterations as f64

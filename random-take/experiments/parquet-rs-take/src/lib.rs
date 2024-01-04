@@ -1,15 +1,8 @@
 use arrow_array::RecordBatch;
-use parquet::{
-    arrow::{
-        arrow_reader::{
-            ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder, RowSelection,
-            RowSelector,
-        },
-        ProjectionMask,
-    },
-    file::reader::ChunkReader,
+use parquet::arrow::{
+    arrow_reader::{ArrowReaderMetadata, ArrowReaderOptions, RowSelection, RowSelector},
+    ProjectionMask,
 };
-use std::fs::File;
 
 struct IndicesToRowSelection<'a, I: Iterator<Item = &'a u32>> {
     iter: I,
@@ -50,131 +43,281 @@ impl<'a, I: Iterator<Item = &'a u32>> Iterator for IndicesToRowSelection<'a, I> 
     }
 }
 
-pub fn take_task<T: ChunkReader + 'static>(
-    file: T,
-    metadata: ArrowReaderMetadata,
-    row_group_number: u32,
-    row_indices: &[u32],
-    column_indices: &[u32],
-    use_selection: bool,
-) -> Vec<RecordBatch> {
-    let start = if row_group_number == 0 {
-        0
-    } else {
-        (0..row_group_number)
-            .map(|rg_num| metadata.metadata().row_group(rg_num as usize).num_rows())
-            .sum()
+pub mod sync {
+    use std::fs::File;
+
+    use parquet::{
+        arrow::arrow_reader::ParquetRecordBatchReaderBuilder, file::reader::ChunkReader,
     };
-    let end = start
-        + metadata
-            .metadata()
-            .row_group(row_group_number as usize)
-            .num_rows();
 
-    let selection = IndicesToRowSelection {
-        iter: row_indices.iter(),
-        start: start as u32,
-        end: end as u32,
-        last: start as u32,
-        next: None,
-    };
-    let selection = RowSelection::from_iter(selection);
-    if !selection.selects_any() {
-        return Vec::new();
+    use super::*;
+
+    pub fn take_task<T: ChunkReader + 'static>(
+        file: T,
+        metadata: ArrowReaderMetadata,
+        row_group_number: u32,
+        row_indices: &[u32],
+        column_indices: &[u32],
+        use_selection: bool,
+    ) -> Vec<RecordBatch> {
+        let start = if row_group_number == 0 {
+            0
+        } else {
+            (0..row_group_number)
+                .map(|rg_num| metadata.metadata().row_group(rg_num as usize).num_rows())
+                .sum()
+        };
+        let end = start
+            + metadata
+                .metadata()
+                .row_group(row_group_number as usize)
+                .num_rows();
+
+        let selection = IndicesToRowSelection {
+            iter: row_indices.iter(),
+            start: start as u32,
+            end: end as u32,
+            last: start as u32,
+            next: None,
+        };
+        let selection = RowSelection::from_iter(selection);
+        if !selection.selects_any() {
+            return Vec::new();
+        }
+        let builder = ParquetRecordBatchReaderBuilder::new_with_metadata(file, metadata);
+        let parquet_schema = builder.parquet_schema();
+        let projection = ProjectionMask::roots(
+            parquet_schema,
+            column_indices.iter().map(|col_idx| *col_idx as usize),
+        );
+        if use_selection {
+            let reader = builder
+                .with_limit(row_indices.len())
+                .with_row_groups(vec![row_group_number as usize])
+                .with_row_selection(selection)
+                .with_projection(projection)
+                .build()
+                .unwrap();
+            reader
+                .collect::<std::result::Result<Vec<_>, arrow_schema::ArrowError>>()
+                .unwrap()
+        } else {
+            let reader = builder.with_projection(projection).build().unwrap();
+            reader
+                .collect::<std::result::Result<Vec<_>, arrow_schema::ArrowError>>()
+                .unwrap()
+        }
     }
-    let builder = ParquetRecordBatchReaderBuilder::new_with_metadata(file, metadata);
-    let parquet_schema = builder.parquet_schema();
-    let projection = ProjectionMask::roots(
-        parquet_schema,
-        column_indices.iter().map(|col_idx| *col_idx as usize),
-    );
-    if use_selection {
-        let reader = builder
-            .with_limit(row_indices.len())
-            .with_row_groups(vec![row_group_number as usize])
-            .with_row_selection(selection)
-            .with_projection(projection)
-            .build()
-            .unwrap();
-        reader
-            .collect::<std::result::Result<Vec<_>, arrow_schema::ArrowError>>()
-            .unwrap()
-    } else {
-        let reader = builder.with_projection(projection).build().unwrap();
-        reader
-            .collect::<std::result::Result<Vec<_>, arrow_schema::ArrowError>>()
-            .unwrap()
+
+    pub trait TryClone {
+        fn try_clone(&self) -> std::io::Result<Self>
+        where
+            Self: Sized;
     }
-}
 
-pub trait TryClone {
-    fn try_clone(&self) -> std::io::Result<Self>
-    where
-        Self: Sized;
-}
-
-impl TryClone for File {
-    fn try_clone(&self) -> std::io::Result<Self>
-    where
-        Self: Sized,
-    {
-        self.try_clone()
+    impl TryClone for File {
+        fn try_clone(&self) -> std::io::Result<Self>
+        where
+            Self: Sized,
+        {
+            self.try_clone()
+        }
     }
-}
 
-pub fn take<T: ChunkReader + TryClone + 'static>(
-    file: T,
-    row_indices: &[u32],
-    column_indices: &[u32],
-    use_selection: bool,
-    metadata: Option<ArrowReaderMetadata>,
-) -> Vec<RecordBatch> {
-    std::thread::scope(|scope| {
-        let metadata = metadata.unwrap_or_else(|| {
-            let options = ArrowReaderOptions::new().with_page_index(true);
-            ArrowReaderMetadata::load(&file, options).unwrap()
-        });
-        (0..metadata.metadata().num_row_groups())
-            .map(|row_group_number| {
-                let file = file.try_clone().unwrap();
-                let metadata = metadata.clone();
-                scope.spawn(move || {
-                    take_task(
-                        file,
-                        metadata,
-                        row_group_number as u32,
-                        row_indices,
-                        column_indices,
-                        use_selection,
-                    )
+    pub fn take<T: ChunkReader + TryClone + 'static>(
+        file: T,
+        row_indices: &[u32],
+        column_indices: &[u32],
+        use_selection: bool,
+        metadata: Option<ArrowReaderMetadata>,
+    ) -> Vec<RecordBatch> {
+        std::thread::scope(|scope| {
+            let metadata = metadata.unwrap_or_else(|| {
+                let options = ArrowReaderOptions::new().with_page_index(true);
+                ArrowReaderMetadata::load(&file, options).unwrap()
+            });
+            (0..metadata.metadata().num_row_groups())
+                .map(|row_group_number| {
+                    let file = file.try_clone().unwrap();
+                    let metadata = metadata.clone();
+                    scope.spawn(move || {
+                        take_task(
+                            file,
+                            metadata,
+                            row_group_number as u32,
+                            row_indices,
+                            column_indices,
+                            use_selection,
+                        )
+                    })
                 })
+                .flat_map(|handle| handle.join().unwrap().into_iter())
+                .collect::<Vec<_>>()
+        })
+    }
+}
+
+pub mod r#async {
+
+    use std::future;
+
+    use async_trait::async_trait;
+    use futures::{stream, FutureExt, StreamExt, TryStreamExt};
+    use parquet::arrow::{async_reader::AsyncFileReader, ParquetRecordBatchStreamBuilder};
+
+    use super::*;
+
+    pub async fn take_task<T: AsyncFileReader + Send + TryClone + Unpin + 'static>(
+        file: &T,
+        metadata: ArrowReaderMetadata,
+        row_group_number: u32,
+        row_indices: &[u32],
+        column_indices: &[u32],
+        use_selection: bool,
+    ) -> Vec<RecordBatch> {
+        let start = if row_group_number == 0 {
+            0
+        } else {
+            (0..row_group_number)
+                .map(|rg_num| metadata.metadata().row_group(rg_num as usize).num_rows())
+                .sum()
+        };
+        let end = start
+            + metadata
+                .metadata()
+                .row_group(row_group_number as usize)
+                .num_rows();
+
+        let selection = IndicesToRowSelection {
+            iter: row_indices.iter(),
+            start: start as u32,
+            end: end as u32,
+            last: start as u32,
+            next: None,
+        };
+        let selection = RowSelection::from_iter(selection);
+        if !selection.selects_any() {
+            return Vec::new();
+        }
+        let builder = ParquetRecordBatchStreamBuilder::new_with_metadata(
+            file.try_clone().await.unwrap(),
+            metadata,
+        );
+        let parquet_schema = builder.parquet_schema();
+        let projection = ProjectionMask::roots(
+            parquet_schema,
+            column_indices.iter().map(|col_idx| *col_idx as usize),
+        );
+        if use_selection {
+            let reader = builder
+                .with_limit(row_indices.len())
+                .with_row_groups(vec![row_group_number as usize])
+                .with_row_selection(selection)
+                .with_projection(projection)
+                .build()
+                .unwrap();
+            reader.try_collect::<Vec<_>>().await.unwrap()
+        } else {
+            let reader = builder.with_projection(projection).build().unwrap();
+            reader.try_collect::<Vec<_>>().await.unwrap()
+        }
+    }
+
+    #[async_trait]
+    pub trait TryClone {
+        async fn try_clone(&self) -> std::io::Result<Self>
+        where
+            Self: Sized;
+    }
+
+    #[async_trait]
+    impl TryClone for tokio::fs::File {
+        async fn try_clone(&self) -> std::io::Result<Self>
+        where
+            Self: Sized,
+        {
+            self.try_clone().await
+        }
+    }
+
+    pub async fn take<T: AsyncFileReader + Unpin + TryClone + 'static>(
+        file: &mut T,
+        row_indices: &[u32],
+        column_indices: &[u32],
+        use_selection: bool,
+        metadata: Option<ArrowReaderMetadata>,
+    ) -> Vec<RecordBatch> {
+        let metadata = if metadata.is_some() {
+            metadata.unwrap()
+        } else {
+            let options = ArrowReaderOptions::new().with_page_index(true);
+            ArrowReaderMetadata::load_async(file, options)
+                .await
+                .unwrap()
+        };
+        stream::iter(0..metadata.metadata().num_row_groups())
+            .map(|row_group_number| {
+                let metadata = metadata.clone();
+                take_task(
+                    file,
+                    metadata,
+                    row_group_number as u32,
+                    row_indices,
+                    column_indices,
+                    use_selection,
+                )
+                .then(|v| future::ready(stream::iter(v)))
             })
-            .flat_map(|handle| handle.join().unwrap().into_iter())
+            .buffer_unordered(64)
+            .flatten()
             .collect::<Vec<_>>()
-    })
+            .await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use std::fs::OpenOptions;
-
     use super::*;
 
     #[tokio::test]
-    async fn test_take_selection() {
-        let path_str = "/tmp/bench_input_50000.parquet";
+    async fn test_take_selection_async() {
+        let path_str = "/tmp/input_rgs_100000.parquet";
         let path = Path::new(path_str);
-        let file = OpenOptions::new().read(true).open(path).unwrap();
-        take(file, &[1], &[3], true, None);
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .open(path)
+            .await
+            .unwrap();
+        r#async::take(&mut file, &[1], &[3], true, None).await;
     }
 
     #[tokio::test]
-    async fn test_take_no_selection() {
-        let path_str = "/tmp/bench_input_50000.parquet";
+    async fn test_take_no_selection_async() {
+        let path_str = "/tmp/input_rgs_100000.parquet";
         let path = Path::new(path_str);
-        let file = OpenOptions::new().read(true).open(path).unwrap();
-        take(file, &[1], &[3], false, None);
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .open(path)
+            .await
+            .unwrap();
+        r#async::take(&mut file, &[1], &[3], false, None).await;
+    }
+
+    #[test]
+    fn test_take_selection_sync() {
+        let path_str = "/tmp/input_rgs_100000.parquet";
+        let path = Path::new(path_str);
+        let file = std::fs::OpenOptions::new().read(true).open(path).unwrap();
+        sync::take(file, &[1], &[3], true, None);
+    }
+
+    #[test]
+    fn test_take_no_selection_sync() {
+        let path_str = "/tmp/input_rgs_100000.parquet";
+        let path = Path::new(path_str);
+        let file = std::fs::OpenOptions::new().read(true).open(path).unwrap();
+        sync::take(file, &[1], &[3], false, None);
     }
 }
