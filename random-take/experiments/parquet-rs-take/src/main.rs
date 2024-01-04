@@ -145,7 +145,7 @@ fn parquet_setup_sync(
     args: &Args,
     _: &dyn ObjectStore,
     work_dir: &Path,
-) -> (std::fs::File, Vec<u32>, Option<ArrowReaderMetadata>) {
+) -> (Vec<u32>, Option<ArrowReaderMetadata>) {
     // TODO: Handle S3
     let path_str = format!("/{}", parquet_path(work_dir, args.row_group_size));
     Command::new("dd")
@@ -180,7 +180,7 @@ fn parquet_setup_sync(
     let mut indices = Vec::from(permuted);
     indices.sort();
 
-    (file, indices, metadata)
+    (indices, metadata)
 }
 
 async fn parquet_setup_async(
@@ -232,18 +232,18 @@ async fn parquet_setup_async(
 }
 
 fn parquet_random_take_sync<T: ChunkReader + SyncTryClone + 'static>(
-    file: T,
+    file_opener: impl Fn() -> T,
     indices: Vec<u32>,
     metadata: Option<ArrowReaderMetadata>,
     col: u32,
 ) {
-    let batches = sync_take(file, &indices, &[col], true, metadata);
+    let batches = sync_take(file_opener, &indices, &[col], true, metadata);
     let num_rows = batches.iter().map(|batch| batch.num_rows()).sum::<usize>();
     assert_eq!(num_rows, indices.len());
 }
 
 async fn parquet_random_take_async<T: AsyncFileReader + Unpin + AsyncTryClone + 'static>(
-    file: &mut T,
+    file: T,
     indices: Vec<u32>,
     metadata: Option<ArrowReaderMetadata>,
     col: u32,
@@ -258,19 +258,23 @@ async fn bench_parquet(args: &Args, work_store: &dyn ObjectStore, work_dir: &Pat
     let mut total_duration = Duration::from_nanos(0);
     for _ in 0..args.iterations {
         if args.r#async {
-            let (mut file, indices, metadata) =
-                parquet_setup_async(args, work_store, work_dir).await;
+            let (file, indices, metadata) = parquet_setup_async(args, work_store, work_dir).await;
             let start = SystemTime::now();
-            parquet_random_take_async(&mut file, indices, metadata, args.column_index()).await;
+            parquet_random_take_async(file, indices, metadata, args.column_index()).await;
             total_duration += start.elapsed().unwrap();
         } else {
-            let (file, indices, metadata) = parquet_setup_sync(args, work_store, work_dir);
+            let file_opener = || {
+                let path_str = format!("/{}", parquet_path(work_dir, args.row_group_size));
+                let path = std::path::Path::new(&path_str);
+                std::fs::OpenOptions::new().read(true).open(path).unwrap()
+            };
+            let (indices, metadata) = parquet_setup_sync(args, work_store, work_dir);
             let start = SystemTime::now();
-            parquet_random_take_sync(file, indices, metadata, args.column_index());
+            parquet_random_take_sync(file_opener, indices, metadata, args.column_index());
             total_duration += start.elapsed().unwrap();
         }
     }
-    (total_duration.as_nanos() as f64 / (1000.0 * 1000.0)) / args.iterations as f64
+    (total_duration.as_nanos() as f64 / (1000000.0)) / args.iterations as f64
 }
 
 fn lance_path(work_dir: &Path) -> Path {
