@@ -125,7 +125,7 @@ pub mod sync {
     }
 
     pub fn take<T: ChunkReader + TryClone + 'static>(
-        file_opener: impl Fn() -> T,
+        file: T,
         row_indices: &[u32],
         column_indices: &[u32],
         use_selection: bool,
@@ -134,11 +134,11 @@ pub mod sync {
         std::thread::scope(|scope| {
             let metadata = metadata.unwrap_or_else(|| {
                 let options = ArrowReaderOptions::new().with_page_index(true);
-                ArrowReaderMetadata::load(&file_opener(), options).unwrap()
+                ArrowReaderMetadata::load(&file, options).unwrap()
             });
             let task_handles = (0..metadata.metadata().num_row_groups())
                 .map(|row_group_number| {
-                    let file = file_opener();
+                    let file = file.try_clone().unwrap();
                     let metadata = metadata.clone();
                     scope.spawn(move || {
                         take_task(
@@ -284,25 +284,15 @@ mod tests {
     fn test_take_selection_sync() {
         let path_str = "/tmp/input_rgs_100000.parquet";
         let path = Path::new(path_str);
-        sync::take(
-            || std::fs::OpenOptions::new().read(true).open(path).unwrap(),
-            &[1],
-            &[3],
-            true,
-            None,
-        );
+        let file = std::fs::OpenOptions::new().read(true).open(path).unwrap();
+        sync::take(file, &[1], &[3], true, None);
     }
 
     #[test]
     fn test_take_no_selection_sync() {
         let path_str = "/tmp/input_rgs_100000.parquet";
         let path = Path::new(path_str);
-        sync::take(
-            || std::fs::OpenOptions::new().read(true).open(path).unwrap(),
-            &[1],
-            &[3],
-            false,
-            None,
-        );
+        let file = std::fs::OpenOptions::new().read(true).open(path).unwrap();
+        sync::take(file, &[1], &[3], false, None);
     }
 }

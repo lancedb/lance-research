@@ -1,5 +1,6 @@
 use std::{
-    fs::OpenOptions,
+    fs::{File, OpenOptions},
+    io::Read,
     process::Command,
     sync::{atomic::AtomicBool, Arc},
     time::{Duration, SystemTime},
@@ -9,6 +10,7 @@ use arrow_array::{
     cast::AsArray, Array, FixedSizeListArray, RecordBatch, RecordBatchIterator, RecordBatchReader,
 };
 use arrow_schema::{DataType, Field};
+use bytes::BytesMut;
 use clap::{Parser, ValueEnum};
 use lance::{
     arrow::{fixed_size_list_type, SchemaExt},
@@ -24,7 +26,10 @@ use parquet::{
         AsyncArrowWriter,
     },
     basic::Compression,
-    file::{properties::WriterProperties, reader::ChunkReader},
+    file::{
+        properties::WriterProperties,
+        reader::{ChunkReader, Length},
+    },
 };
 use rand::seq::SliceRandom;
 use random_take_bench::r#async::{take as async_take, TryClone as AsyncTryClone};
@@ -231,13 +236,65 @@ async fn parquet_setup_async(
     (file, indices, metadata)
 }
 
+struct ReadAtReader {
+    target: File,
+    cursor: u64,
+}
+
+impl Read for ReadAtReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let offset = self.cursor;
+        let bytes_read = std::os::unix::fs::FileExt::read_at(&self.target, buf, offset)?;
+        self.cursor += bytes_read as u64;
+        Ok(bytes_read)
+    }
+}
+
+struct ReadAtFile(File);
+
+impl Length for ReadAtFile {
+    fn len(&self) -> u64 {
+        self.0.len()
+    }
+}
+
+impl ChunkReader for ReadAtFile {
+    type T = ReadAtReader;
+
+    fn get_read(&self, start: u64) -> parquet::errors::Result<Self::T> {
+        Ok(ReadAtReader {
+            target: self.0.try_clone().unwrap(),
+            cursor: start,
+        })
+    }
+
+    fn get_bytes(&self, start: u64, length: usize) -> parquet::errors::Result<bytes::Bytes> {
+        let mut buf = BytesMut::with_capacity(length);
+        unsafe {
+            buf.set_len(length);
+            let bytes_read = std::os::unix::fs::FileExt::read_at(&self.0, &mut buf, start)?;
+            buf.set_len(bytes_read);
+        }
+        Ok(buf.into())
+    }
+}
+
+impl SyncTryClone for ReadAtFile {
+    fn try_clone(&self) -> std::io::Result<Self>
+    where
+        Self: Sized,
+    {
+        self.0.try_clone().map(ReadAtFile)
+    }
+}
+
 fn parquet_random_take_sync<T: ChunkReader + SyncTryClone + 'static>(
-    file_opener: impl Fn() -> T,
+    file: T,
     indices: Vec<u32>,
     metadata: Option<ArrowReaderMetadata>,
     col: u32,
 ) {
-    let batches = sync_take(file_opener, &indices, &[col], true, metadata);
+    let batches = sync_take(file, &indices, &[col], true, metadata);
     let num_rows = batches.iter().map(|batch| batch.num_rows()).sum::<usize>();
     assert_eq!(num_rows, indices.len());
 }
@@ -259,19 +316,30 @@ async fn bench_parquet(args: &Args, work_store: &dyn ObjectStore, work_dir: &Pat
     for _ in 0..args.iterations {
         if args.r#async {
             let (file, indices, metadata) = parquet_setup_async(args, work_store, work_dir).await;
+            if args.iterations == 1 {
+                log("Bench Start");
+            }
             let start = SystemTime::now();
             parquet_random_take_async(file, indices, metadata, args.column_index()).await;
             total_duration += start.elapsed().unwrap();
+            if args.iterations == 1 {
+                log("Bench End");
+            }
         } else {
-            let file_opener = || {
-                let path_str = format!("/{}", parquet_path(work_dir, args.row_group_size));
-                let path = std::path::Path::new(&path_str);
-                std::fs::OpenOptions::new().read(true).open(path).unwrap()
-            };
+            let path_str = format!("/{}", parquet_path(work_dir, args.row_group_size));
+            let path = std::path::Path::new(&path_str);
+            let file = std::fs::OpenOptions::new().read(true).open(path).unwrap();
+            let file = ReadAtFile(file);
             let (indices, metadata) = parquet_setup_sync(args, work_store, work_dir);
+            if args.iterations == 1 {
+                log("Bench Start");
+            }
             let start = SystemTime::now();
-            parquet_random_take_sync(file_opener, indices, metadata, args.column_index());
+            parquet_random_take_sync(file, indices, metadata, args.column_index());
             total_duration += start.elapsed().unwrap();
+            if args.iterations == 1 {
+                log("Bench End");
+            }
         }
     }
     (total_duration.as_nanos() as f64 / (1000000.0)) / args.iterations as f64
@@ -286,7 +354,7 @@ async fn lance_global_setup(args: &Args, work_store: &dyn ObjectStore, work_dir:
     let sample_file = dest_path.child("_latest.manifest");
     let dest_uri = format!("/{}", dest_path);
     if work_store.exists(&sample_file).await.unwrap() {
-        log(format!("Using existing lance dataset at {}", dest_path));
+        log(format!("Using existing lance dataset at {}", dest_uri));
         return Dataset::open(&dest_uri).await.unwrap();
     }
 
@@ -370,12 +438,8 @@ async fn lance_setup(
         dataset.take(&indices, &schema).await.unwrap();
         dataset.clone()
     } else {
-        let url = format!("file://{}", dest_path);
-        DatasetBuilder::from_uri(&url)
-            .with_object_store(work_store, Url::parse(&url).unwrap())
-            .load()
-            .await
-            .unwrap()
+        let url = format!("file:///{}", dest_path);
+        DatasetBuilder::from_uri(&url).load().await.unwrap()
     };
 
     (dataset, indices)
@@ -393,9 +457,15 @@ async fn bench_lance(args: &Args, work_store: Arc<dyn ObjectStore>, work_dir: &P
     let mut total_duration = Duration::from_nanos(0);
     for _ in 0..args.iterations {
         let (dataset, indices) = lance_setup(&dataset, args, work_store.clone(), work_dir).await;
+        if args.iterations == 1 {
+            log("Bench Start");
+        }
         let start = SystemTime::now();
         lance_random_take(&dataset, indices, args.column_index()).await;
         total_duration += start.elapsed().unwrap();
+        if args.iterations == 1 {
+            log("Bench End");
+        }
     }
     (total_duration.as_nanos() as f64 / (1000.0 * 1000.0)) / args.iterations as f64
 }
