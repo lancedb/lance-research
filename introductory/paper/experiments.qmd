@@ -91,15 +91,13 @@ These are examples where compression doesn't help much but the cost of read ampl
 ```{r}
 library(ggplot2)
 
-data_dir <- "introductory/experiments/late_materialization/data/2023-12-29T16:08:18/"
-# data_dir <- "../experiments/late_materialization/data/2023-12-29T16:00:13/"
+# data_dir <- "introductory/experiments/late_materialization/"
+data_dir <- "../experiments/late_materialization/"
 
-runtime_results <- read.csv(paste0(data_dir, "runtime_results.csv"), header=FALSE)
-names(runtime_results) <- c("format", "columns", "predicate", "late_materialization", "num_rows", "selectivity", "runtime")
+runtime_results <- read.csv(paste0(data_dir, "runtime_results.csv"))
 runtime_results$materialization_type <- as.factor(ifelse(runtime_results$late_materialization, "Late", "Early"))
 
-io_results <- read.csv(paste0(data_dir, "io_results.csv"), header=FALSE)
-names(io_results) <- c("format", "columns", "predicate", "late_materialization", "num_rows", "selectivity", "num_ios", "total_bytes")
+io_results <- read.csv(paste0(data_dir, "io_results.csv"))
 io_results$materialization_type <- as.factor(ifelse(io_results$late_materialization, "Late", "Early"))
 ```
 
@@ -109,7 +107,7 @@ In @fig-late-mat-runtime, we compare the time to scan the dataset with filters o
 #| label: fig-late-mat-runtime
 #| fig-cap: Scan time for early versus late materialization.
 #| fig-height: 4
-ggplot(runtime_results, aes(color=format, linetype=materialization_type, x=selectivity, y=runtime)) +
+ggplot(runtime_results, aes(color=library, linetype=materialization_type, x=selectivity, y=runtime)) +
  geom_line() +
  facet_wrap(~ columns, scales = "free_y", labeller = "label_both") +
  scale_x_continuous(label=scales::label_percent()) +
