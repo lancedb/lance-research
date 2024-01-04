@@ -1,3 +1,7 @@
+---
+execute:
+  echo: false
+---
 # Experiments
 
 ## Scattered Access
@@ -27,6 +31,47 @@ available at ?.  To emulate lance we created a thread task per row group.  Parqu
 compression and with 100,000 rows per row group as we found these settings to perform best.  Latency
 measurements are averaged across 1,000 runs.  I/O measurements are representative samples, since the actual I/O
 required varied slightly based on row id selection.
+
+```{python}
+import matplotlib.pyplot as plt
+import pyarrow.csv as csv
+
+data = csv.read_csv("../experiments/random-take/local.csv").to_pandas()
+fig, ax = plt.subplots()
+plt.xlabel("Take Size (# rows)")
+plt.ylabel("Latency (ms)")
+
+ax.set_yscale("log")
+
+is_lance_data = (data["format"] == "lance") & (data["use_cache"] == True)
+
+lance_double = data[is_lance_data & (data["column"] == "double")]
+x = lance_double["take_size"]
+y = lance_double["latency"]
+plt.plot(x, y, marker="o", color="C0", ls="-", label="lance (double)")
+
+lance_vector = data[is_lance_data & (data["column"] == "vector")]
+x = lance_vector["take_size"]
+y = lance_vector["latency"]
+plt.plot(x, y, marker="o", color="C0", ls=":", label="lance (vector)")
+
+is_parquet_data = (data["format"] == "parquet") & (data["use_cache"] == True)
+
+parquet_double = data[is_parquet_data & (data["column"] == "double")]
+x = parquet_double["take_size"]
+y = parquet_double["latency"]
+plt.plot(x, y, marker="o", color="C1", ls="-", label="parquet (double)")
+
+parquet_vector = data[is_parquet_data & (data["column"] == "vector")]
+x = parquet_vector["take_size"]
+y = parquet_vector["latency"]
+plt.plot(x, y, marker="o", color="C1", ls=":", label="parquet (vector)")
+
+ax.set_xticks(lance_double["take_size"])
+
+plt.legend()
+plt.show(fig)
+```
 
 The results are in figure ?.  The lance format has significatly lower latency than parquet in all situations.
 The overhead of loading and parsing the file metadata is considerable in both formats, especially when loading
