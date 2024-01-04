@@ -1142,12 +1142,15 @@ dependencies = [
 name = "late_materialization"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "bytes",
  "datafusion",
  "futures",
  "lazy_static",
  "object_store",
  "pyo3",
  "tokio",
+ "url",
 ]
 
 [[package]]

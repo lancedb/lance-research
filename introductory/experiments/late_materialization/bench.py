@@ -71,7 +71,7 @@ def test_runtime(benchmark, project, min_value, library, late_materialization):
         if columns == ["vec"]:
             # See: https://github.com/apache/arrow-datafusion/issues/8742
             pytest.skip("DataFusion does not support vector columns in projection")
-        num_rows = benchmark(
+        num_rows, _ = benchmark(
             scan_datafusion,
             "data/parquet",
             columns,
@@ -84,11 +84,10 @@ def test_runtime(benchmark, project, min_value, library, late_materialization):
 
 
 class IOResult(NamedTuple):
-    format: str
+    library: str
     columns: str
     predicate: str
     late_materialization: bool
-    num_rows: int
     selectivity: float
     num_ios: int
     total_bytes: int
@@ -137,11 +136,10 @@ def measure_lance_io(
             total_bytes += int(end) - int(start)
 
     return IOResult(
-        format="Lance",
+        library="Lance",
         columns=",".join(columns),
         predicate=predicate,
         late_materialization=late_materialization,
-        num_rows=num_rows,
         selectivity=num_rows / dataset.count_rows(),
         num_ios=num_ios,
         total_bytes=total_bytes,
@@ -166,24 +164,50 @@ def measure_parquet_io(
     )
 
     return IOResult(
-        format="Parquet",
+        library="PyArrow",
         columns=",".join(columns),
         predicate=predicate,
         late_materialization=False,
-        num_rows=num_rows,
         selectivity=num_rows / dataset.count_rows(),
         num_ios=handler.num_ios,
         total_bytes=handler.total_bytes,
     )
 
 
+def measure_datafusion_io(
+    path: str,
+    columns: List[str],
+    min_value: int,
+    late_materialization: bool,
+) -> IOResult:
+    num_rows, (num_ios, io_bytes) = scan_datafusion(
+        "data/parquet",
+        columns,
+        min_value,
+        late_materialization=late_materialization,
+        measure_io=True,
+    )
+
+    dataset = pa_ds.dataset("data/parquet", format="parquet")
+
+    return IOResult(
+        library="DataFusion",
+        columns=",".join(columns),
+        predicate=f"id >= {min_value}",
+        late_materialization=late_materialization,
+        selectivity=num_rows / dataset.count_rows(),
+        num_ios=num_ios,
+        total_bytes=io_bytes,
+    )
+
+
 @pytest.mark.parametrize("project", ["id", "vec", "img"])
 @pytest.mark.parametrize("min_value", [10000, 25000, 50000, 75000, 90000])
-@pytest.mark.parametrize("library", ["lance", "pyarrow", "datafusion"])
+@pytest.mark.parametrize("library", ["Lance", "PyArrow", "DataFusion"])
 @pytest.mark.parametrize("late_materialization", [True, False])
 def test_io(io_results, project, min_value, library, late_materialization):
     columns = [project]
-    if library == "lance":
+    if library == "Lance":
         # Useful for debugging:
         # import logging
         # logger = multiprocessing.log_to_stderr()
@@ -195,7 +219,7 @@ def test_io(io_results, project, min_value, library, late_materialization):
             predicate=f"id >= {min_value}",
             late_materialization=late_materialization,
         )
-    elif library == "pyarrow":
+    elif library == "PyArrow":
         if late_materialization:
             pytest.skip("PyArrow does not support late materialization")
         ds = pa_ds.dataset("data/parquet", format="parquet")
@@ -204,11 +228,16 @@ def test_io(io_results, project, min_value, library, late_materialization):
             columns,
             predicate=pa_ds.field("id") >= min_value,
         )
-    elif library == "datafusion":
+    elif library == "DataFusion":
         if columns == ["vec"]:
             # See: https://github.com/apache/arrow-datafusion/issues/8742
             pytest.skip("DataFusion does not support vector columns in projection")
-        pytest.skip("Not yet implemented")
+        res = measure_datafusion_io(
+            "data/parquet",
+            columns,
+            min_value,
+            late_materialization=late_materialization,
+        )
 
     io_results.append(res)
 

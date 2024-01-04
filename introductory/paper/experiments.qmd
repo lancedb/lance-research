@@ -126,7 +126,7 @@ In @fig-late-mat-total-bytes, we compare the total bytes read during the scans p
 #| label: fig-late-mat-total-bytes
 #| fig-cap: Bytes read for early versus late materialization.
 #| fig-height: 4
-ggplot(io_results, aes(color=format, linetype=materialization_type, x=selectivity, y=total_bytes)) +
+ggplot(io_results, aes(color=library, linetype=materialization_type, x=selectivity, y=total_bytes)) +
  geom_line() +
  facet_wrap(~ columns, scales = "free_y", labeller = "label_both") +
  scale_y_continuous(label=scales::label_bytes(unit="MB")) +
@@ -135,8 +135,8 @@ ggplot(io_results, aes(color=format, linetype=materialization_type, x=selectivit
  labs(
   linetype="Materialization type",
   x="Filter selectivity",
-  y="Runtime (s)",
-  color="Format",
+  y="Total bytes read",
+  color="Library",
  )
 ```
 
@@ -147,7 +147,7 @@ In @fig-late-mat-num-ios, we compare the total number of IO calls performed duri
 #| label: fig-late-mat-num-ios
 #| fig-cap: The total number of IO calls made while scanning a single column with filter.
 #| fig-height: 4
-ggplot(io_results, aes(color=format, linetype=materialization_type, x=selectivity, y=num_ios)) +
+ggplot(io_results, aes(color=library, linetype=materialization_type, x=selectivity, y=num_ios)) +
  geom_line() +
  facet_wrap(~ columns, scales = "free_y") +
  scale_x_continuous(label=scales::label_percent()) +
