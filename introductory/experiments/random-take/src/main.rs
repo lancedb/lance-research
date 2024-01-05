@@ -1,6 +1,6 @@
 use std::{
     fs::{File, OpenOptions},
-    io::{BufReader, Read},
+    io::Read,
     process::Command,
     sync::{atomic::AtomicBool, Arc},
     time::{Duration, SystemTime},
@@ -35,7 +35,6 @@ use parquet::{
 use rand::seq::SliceRandom;
 use random_take_bench::r#async::{take as async_take, TryClone as AsyncTryClone};
 use random_take_bench::sync::{take as sync_take, TryClone as SyncTryClone};
-use tokio::runtime::Handle;
 
 /// Simple program to greet a person
 #[derive(Parser, Clone, Debug)]

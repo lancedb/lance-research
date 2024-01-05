@@ -20,8 +20,6 @@ def get_bench_args(iterations: int, format: str, column_type: str, take_size: in
         f"{take_size}",
         "--row-group-size",
         f"{row_group_size}",
-        "--workdir",
-        "s3://weston-s3-lance-test/random-take"
     ]
 
     if quiet:
@@ -33,7 +31,7 @@ def get_bench_args(iterations: int, format: str, column_type: str, take_size: in
     args.extend([
         format,
         column_type,
-        "/home/ubuntu/laion_100m/shard_0000.parquet"
+        "/home/pace/dev/data/laion_100m/shard_0000.parquet"
     ])
 
     return args

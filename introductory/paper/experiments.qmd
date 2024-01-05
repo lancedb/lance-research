@@ -4,7 +4,7 @@ execute:
 ---
 # Experiments
 
-## Scattered Access
+## Scattered Row-based Access
 
 A "take" operation is a common file operation that selects rows from a file by row number.  This operation is
 common when using secondary indices, which are indices that do not require the data to be ordered in any
@@ -22,22 +22,25 @@ that random access to rows remains possible without requiring complex decoding.
 We evaluate Lance's performance on this type of operation by selecting K rows at random from a single file
 containing the first million rows of the laion-5b english dataset.  We retrieve a single column of data.  This
 column is either the similarity column (an 8-byte double value) or the image embedding (a fixed size list where
-each value is a vector with 768 2-byte fp16 values).  We consider both the cold-start case, where the metadata
-and the data must be fetched from disk and the warm-start case where the metadata is cached in memory.
+each value is a vector with 768 2-byte fp16 values).  All latency numbers are assuming the the file metadata is
+cached in memory.  Cold start cases (where the metadata is not cached) add a small amount of latency to both
+formats that does not depend on the other parameters.
 
 One challenge we encountered is that parquet libraries do not have builtin support for this type of operation.
 We created a custom take routine for both parquet-rs and parquet-cpp.  The source code for this routine is
 available at ?.  To emulate lance we created a thread task per row group.  Parquet files were written without
 compression and with 100,000 rows per row group as we found these settings to perform best.  Latency
-measurements are averaged across 1,000 runs.  I/O measurements are representative samples, since the actual I/O
-required varied slightly based on row id selection.
+measurements are averaged across many runs.  I/O measurements are representative samples, since the actual I/O
+required varies slightly based on row id selection.
 
 ```{python}
 import matplotlib.pyplot as plt
 import pyarrow.csv as csv
 
 data = csv.read_csv("../experiments/random-take/local.csv").to_pandas()
+
 fig, ax = plt.subplots()
+plt.suptitle("Random Take Latency")
 plt.xlabel("Take Size (# rows)")
 plt.ylabel("Latency (ms)")
 
@@ -70,12 +73,158 @@ plt.plot(x, y, marker="o", color="C1", ls=":", label="parquet (vector)")
 ax.set_xticks(lance_double["take_size"])
 
 plt.legend()
-plt.show(fig)
+plt.show()
 ```
 
-The results are in figure ?.  The lance format has significatly lower latency than parquet in all situations.
-The overhead of loading and parsing the file metadata is considerable in both formats, especially when loading
-8-byte values.  When running parquet on a fast disk the I/O does not correlate with the latency.  This suggests
-that the CPU overhead is the bottleneck.  Lance's relatively simple encodings help it to avoid this situation.
+The results are in figure ?.  The lance format has significatly lower latency than parquet in most situations.
+When reading the 8-byte double column there are only a few parquet data pages and parquet quickly ends up reading
+the entire column.  When reading large columns there are many data pages the data page overread hurts parquet
+significantly.  When taking a large number of rows from a small column lance issues a many small reads which hurts
+performance.  This suggests that coalescing I/O requests may be a useful addition to Lance.  Parquet, since it
+reads entire pages at a time, is effectively coalesced already.
+
+```{python}
+import matplotlib.pyplot as plt
+import pyarrow.csv as csv
+
+data = csv.read_csv("../experiments/random-take/local.csv").to_pandas()
+
+fig, ax = plt.subplots()
+plt.suptitle("Random Take I/O")
+plt.xlabel("Take Size (# rows)")
+plt.ylabel("Bytes Read (KiB)")
+
+ax.set_yscale("log")
+
+is_lance_data = (data["format"] == "lance") & (data["use_cache"] == True)
+
+lance_double = data[is_lance_data & (data["column"] == "double")]
+x = lance_double["take_size"]
+y = lance_double["io_size"] / 1024.0
+plt.plot(x, y, marker='o', color="C0", ls="-", label = "lance (double)")
+
+lance_vector = data[is_lance_data & (data["column"] == "vector")] 
+x = lance_vector["take_size"]
+y = lance_vector["io_size"] / 1024.0
+plt.plot(x, y, marker='o', color="C0", ls=":", label = "lance (vector)")
+
+is_parquet_data = (data["format"] == "parquet") & (data["use_cache"] == True)
+
+parquet_double = data[is_parquet_data & (data["column"] == "double")]
+x = parquet_double["take_size"]
+y = parquet_double["io_size"] / 1024.0
+plt.plot(x, y, marker='o', color="C1", ls="-", label = "parquet (double)")
+
+parquet_vector = data[is_parquet_data & (data["column"] == "vector")]
+x = parquet_vector["take_size"]
+y = parquet_vector["io_size"] / 1024.0
+plt.plot(x, y, marker='o', color="C1", ls=":", label = "parquet (vector)")
+
+ax.set_xticks(lance_double["take_size"])
+
+plt.legend()
+plt.show()
+```
+
+```{python}
+import matplotlib.pyplot as plt
+import pyarrow.csv as csv
+
+data = csv.read_csv("../experiments/random-take/local.csv").to_pandas()
+
+fig, ax = plt.subplots()
+plt.suptitle("Random Take IOPS")
+plt.xlabel("Take Size (# rows)")
+plt.ylabel("I/O Operations")
+
+ax.set_yscale("log")
+
+is_lance_data = (data["format"] == "lance") & (data["use_cache"] == True)
+
+lance_double = data[is_lance_data & (data["column"] == "double")]
+x = lance_double["take_size"]
+y = lance_double["iops"]
+plt.plot(x, y, marker='o', color="C0", ls="-", label = "lance (double)")
+
+lance_vector = data[is_lance_data & (data["column"] == "vector")] 
+x = lance_vector["take_size"]
+y = lance_vector["iops"]
+plt.plot(x, y, marker='o', color="C0", ls=":", label = "lance (vector)")
+
+is_parquet_data = (data["format"] == "parquet") & (data["use_cache"] == True)
+
+parquet_double = data[is_parquet_data & (data["column"] == "double")]
+x = parquet_double["take_size"]
+y = parquet_double["iops"]
+plt.plot(x, y, marker='o', color="C1", ls="-", label = "parquet (double)")
+
+parquet_vector = data[is_parquet_data & (data["column"] == "vector")]
+x = parquet_vector["take_size"]
+y = parquet_vector["iops"]
+plt.plot(x, y, marker='o', color="C1", ls=":", label = "parquet (vector)")
+
+ax.set_xticks(lance_double["take_size"])
+
+plt.legend()
+```
+
+Figures ? and ? show the I/O characteristics of the random take operation.  In both Lance and Parquet the latency
+was highly correlated with the amount of bytes read, suggesting the operation is I/O bound in both formats.  The
+large number of IOPS required by lance reinforces the need for coalescing.
+
+```{python}
+import pandas as pd
+import matplotlib.pyplot as plt
+import pyarrow.csv as csv
+
+data = csv.read_csv("../experiments/random-take/local.csv").to_pandas()
+s3_data = csv.read_csv("../experiments/random-take/s3.csv").to_pandas()
+s3_data["filesystem"] = "s3"
+nfs_data = csv.read_csv("../experiments/random-take/nfs.csv").to_pandas()
+nfs_data["filesystem"] = "nfs"
+local_data = data[(data["take_size"] == 64) & (data["use_cache"] == True)].copy()
+local_data["filesystem"] = "local"
+
+combined_data = pd.concat([s3_data, nfs_data, local_data])
+
+fig, ax = plt.subplots()
+plt.suptitle("Random Take (64 rows) Vs. Filesystem")
+plt.xlabel("FileSystem")
+plt.ylabel("Latency (ms)")
+
+ax.set_yscale("log")
+
+is_lance_data = (combined_data["format"] == "lance")
+
+lance_double = combined_data[is_lance_data & (combined_data["column"] == "double")]
+x = lance_double["filesystem"]
+y = lance_double["latency"]
+plt.plot(x, y, marker='o', color="C0", ls="-", label = "lance (double)")
+
+lance_vector = combined_data[is_lance_data & (combined_data["column"] == "vector")] 
+x = lance_vector["filesystem"]
+y = lance_vector["latency"]
+plt.plot(x, y, marker='o', color="C0", ls=":", label = "lance (vector)")
+
+is_parquet_data = (combined_data["format"] == "parquet")
+
+parquet_double = combined_data[is_parquet_data & (combined_data["column"] == "double")]
+x = parquet_double["filesystem"]
+y = parquet_double["latency"]
+plt.plot(x, y, marker='o', color="C1", ls="-", label = "parquet (double)")
+
+parquet_vector = combined_data[is_parquet_data & (combined_data["column"] == "vector")]
+x = parquet_vector["filesystem"]
+y = parquet_vector["latency"]
+plt.plot(x, y, marker='o', color="C1", ls=":", label = "parquet (vector)")
+
+plt.legend()
+plt.show()
+```
+
+Performance was also measured against different filesystems.  The previous results were using a fast local (NVME)
+disk.  The take performance was also measured on NFS and S3 which are two popular cloud storage technologies.  The
+results of this experiment are in figure ?.  S3 has a particularly high per-operation overhead and Lance's performance
+suffered significantly as a result.
 
 ## Scanning
