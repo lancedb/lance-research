@@ -30,7 +30,10 @@ lazy_static::lazy_static! {
             ..Default::default()
         };
 
-        SessionContext::new_with_config_rt(Default::default(), Arc::new(runtime_env))
+        // Enable late materialization (it is disabled by default)
+        let config = SessionConfig::default().set_bool("datafusion.execution.parquet.pushdown_filters", true);
+
+        SessionContext::new_with_config_rt(config, Arc::new(runtime_env))
     };
 }
 
@@ -40,6 +43,8 @@ pub struct ScanConfig {
     pub late_materialization: bool,
     #[pyo3(item)]
     pub measure_io: bool,
+    #[pyo3(item)]
+    pub explain: bool,
 }
 // TODO: it might be an unfair comparison to make the `read_parquet` call here.
 //      We should try to put the initialization in another call.
@@ -78,6 +83,11 @@ fn scan_datafusion(
 
         let columns = columns.iter().map(col).collect::<Vec<_>>();
         let df = df.select(columns)?;
+
+        if config.explain {
+            println!("{:?}", df.clone().create_physical_plan().await?);
+            println!("{:?}", df.clone().explain(false, false)?.collect().await);
+        }
 
         let mut row_count = 0;
         let mut stream = df.execute_stream().await?;

@@ -78,6 +78,7 @@ def test_runtime(benchmark, project, min_value, library, late_materialization):
             min_value,
             late_materialization=late_materialization,
             measure_io=False,
+            explain=False,
         )
 
     assert num_rows == 100_000 - min_value
@@ -181,11 +182,12 @@ def measure_datafusion_io(
     late_materialization: bool,
 ) -> IOResult:
     num_rows, (num_ios, io_bytes) = scan_datafusion(
-        "data/parquet",
+        path,
         columns,
         min_value,
         late_materialization=late_materialization,
         measure_io=True,
+        explain=False,
     )
 
     dataset = pa_ds.dataset("data/parquet", format="parquet")
@@ -202,7 +204,7 @@ def measure_datafusion_io(
 
 
 @pytest.mark.parametrize("project", ["id", "vec", "img"])
-@pytest.mark.parametrize("min_value", [10000, 25000, 50000, 75000, 90000])
+@pytest.mark.parametrize("min_value", list(range(0, 100_000, 2_500)))
 @pytest.mark.parametrize("library", ["Lance", "PyArrow", "DataFusion"])
 @pytest.mark.parametrize("late_materialization", [True, False])
 def test_io(io_results, project, min_value, library, late_materialization):

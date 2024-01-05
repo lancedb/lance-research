@@ -87,6 +87,7 @@ As a test dataset, we used a sythetic dataset with three columns:
 
 These are examples where compression doesn't help much but the cost of read amplification is high. There might be other types of columns, such as text documents, where there is a large size and cross-cell compression might be useful. But within-cell compression is likely to be a good tradeoff when considered with the requirement of low read-amplication.
 <!-- TODO: discuss effect of Parquet row group / page size on read amplification -->
+<!-- TODO: Make projection of scalar column separate from id filter column -->
 
 ```{r}
 library(ggplot2)
@@ -101,12 +102,14 @@ io_results <- read.csv(paste0(data_dir, "io_results.csv"))
 io_results$materialization_type <- as.factor(ifelse(io_results$late_materialization, "Late", "Early"))
 ```
 
-In @fig-late-mat-runtime, we compare the time to scan the dataset with filters of varying selectivity for Parquet and Lance. For Lance, we show early and late materialization to show the impact of late materialization. PyArrow's Parquet scanner does not have a late materialization implementation, so we do not show that here.
+In @fig-late-mat-runtime, we compare the time to scan the dataset with filters of varying selectivity for Parquet and Lance. For Lance, we show early and late materialization to show the impact of late materialization. We show both PyArrow and DataFusion's Parquet scanners. PyArrow is commonly used in Parquet benchmarks in the literature, but unlike DataFusion lacks a late materialization implementation. (DataFusion, however doesn't support projection of a vector column at the time of writing, so it's missing the `vec` projection.)
+
+For the small `id` column, both Parquet readers have a slight edge over Parquet. However, with the larger `vec` and `img` columns, Lance is significantly faster at scanning those projections. This is especially pronounced with low-selectivity filters when late materialization is turned on.
 
 ```{r}
 #| label: fig-late-mat-runtime
 #| fig-cap: Scan time for early versus late materialization.
-#| fig-height: 4
+#| fig-height: 4.25
 ggplot(runtime_results, aes(color=library, linetype=materialization_type, x=selectivity, y=runtime)) +
  geom_line() +
  facet_wrap(~ columns, scales = "free_y", labeller = "label_both") +
@@ -120,7 +123,10 @@ ggplot(runtime_results, aes(color=library, linetype=materialization_type, x=sele
  )
 ```
 
-In @fig-late-mat-total-bytes, we compare the total bytes read during the scans performed above. For Parquet, we include a rudimentary late materialization implementation for comparison.
+In @fig-late-mat-total-bytes, we compare the total bytes read during the scans performed above. Both DataFusion and Lance are able to skip a substantial amount of IO, but Lance is able to smoothly scale while DataFusion jumps up each time it reaches a new row group boundary. Because the filter being used selects a contiguous range of rows, DataFusion will only ever have one partial read of a group, limiting the read amplification to no more than 400MB in 
+the case of the `img` column. However, if the filter results is more broken up, the read amplification will be stronger.
+
+<!-- TODO: add a case where the filter is more random -->
 
 ```{r}
 #| label: fig-late-mat-total-bytes
