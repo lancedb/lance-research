@@ -10,7 +10,7 @@ use arrow_array::{
     cast::AsArray, Array, FixedSizeListArray, RecordBatch, RecordBatchIterator, RecordBatchReader,
 };
 use arrow_schema::{DataType, Field};
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use clap::{Parser, ValueEnum};
 use lance::{
     arrow::{fixed_size_list_type, SchemaExt},
@@ -35,6 +35,7 @@ use parquet::{
 use rand::seq::SliceRandom;
 use random_take_bench::r#async::{take as async_take, TryClone as AsyncTryClone};
 use random_take_bench::sync::{take as sync_take, TryClone as SyncTryClone};
+use tokio::runtime::Handle;
 
 /// Simple program to greet a person
 #[derive(Parser, Clone, Debug)]
@@ -125,11 +126,32 @@ impl Length for ObjectStoreFile {
     }
 }
 
-impl ChunkReader for ObjectStoreFile {
-    type T = BufReader<File>;
+struct ObjectStoreReader {
+    object_store: Arc<dyn ObjectStore>,
+    location: Path,
+    offset: u64,
+}
 
-    fn get_read(&self, _: u64) -> parquet::errors::Result<Self::T> {
-        todo!()
+impl Read for ObjectStoreReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let range = (self.offset as usize)..(self.offset as usize + buf.len());
+        let mut bytes = RT
+            .block_on(self.object_store.get_range(&self.location, range))
+            .unwrap();
+        bytes.copy_to_slice(buf);
+        Ok(buf.len())
+    }
+}
+
+impl ChunkReader for ObjectStoreFile {
+    type T = ObjectStoreReader;
+
+    fn get_read(&self, start: u64) -> parquet::errors::Result<Self::T> {
+        Ok(ObjectStoreReader {
+            object_store: self.object_store.clone(),
+            location: self.location.clone(),
+            offset: start,
+        })
     }
 
     fn get_bytes(&self, start: u64, length: usize) -> parquet::errors::Result<bytes::Bytes> {
@@ -191,7 +213,7 @@ impl WorkDir {
         }
     }
 
-    fn file(&self, path: Path) -> impl ChunkReader<T = BufReader<File>> + SyncTryClone {
+    fn file(&self, path: Path) -> impl ChunkReader + SyncTryClone {
         ObjectStoreFile {
             location: path,
             object_store: self.object_store.clone(),
@@ -436,10 +458,10 @@ async fn bench_parquet(args: &Args, work_dir: &WorkDir) -> f64 {
             }
         } else {
             if work_dir.is_s3 {
-	        let iterations = args.iterations;
-	        let args = (*args).clone();
-		let work_dir = (*work_dir).clone();
-	        let duration = tokio::task::spawn_blocking(move || {
+                let iterations = args.iterations;
+                let args = (*args).clone();
+                let work_dir = (*work_dir).clone();
+                let duration = tokio::task::spawn_blocking(move || {
                     let (indices, metadata) = parquet_setup_sync(&args, &work_dir);
                     let path = parquet_path(&work_dir, args.row_group_size);
                     let file = work_dir.file(path);
@@ -448,9 +470,11 @@ async fn bench_parquet(args: &Args, work_dir: &WorkDir) -> f64 {
                     }
                     let start = SystemTime::now();
                     parquet_random_take_sync(file, indices, metadata, args.column_index());
-		    start.elapsed().unwrap()
-                }).await.unwrap();
-		total_duration += duration;
+                    start.elapsed().unwrap()
+                })
+                .await
+                .unwrap();
+                total_duration += duration;
                 if iterations == 1 {
                     log("Bench End");
                 }
