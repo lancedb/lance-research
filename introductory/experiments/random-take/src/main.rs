@@ -1,6 +1,6 @@
 use std::{
     fs::{File, OpenOptions},
-    io::Read,
+    io::{BufReader, Read},
     process::Command,
     sync::{atomic::AtomicBool, Arc},
     time::{Duration, SystemTime},
@@ -18,7 +18,8 @@ use lance::{
     io::object_store::ObjectStoreExt,
     Dataset,
 };
-use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
+use object_store::{aws::AmazonS3Builder, local::LocalFileSystem, path::Path, ObjectStore};
+use once_cell::sync::Lazy;
 use parquet::{
     arrow::{
         arrow_reader::{ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder},
@@ -34,7 +35,6 @@ use parquet::{
 use rand::seq::SliceRandom;
 use random_take_bench::r#async::{take as async_take, TryClone as AsyncTryClone};
 use random_take_bench::sync::{take as sync_take, TryClone as SyncTryClone};
-use url::Url;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -103,8 +103,105 @@ enum ColumnType {
     Vector,
 }
 
-fn parquet_path(work_dir: &Path, row_group_size: u32) -> Path {
-    work_dir.child(format!("input_rgs_{}.parquet", row_group_size))
+struct WorkDir {
+    object_store: Arc<dyn ObjectStore>,
+    path: Path,
+    is_s3: bool,
+}
+
+static RT: Lazy<tokio::runtime::Runtime> = Lazy::new(|| tokio::runtime::Runtime::new().unwrap());
+
+struct ObjectStoreFile {
+    object_store: Arc<dyn ObjectStore>,
+    location: Path,
+}
+
+impl Length for ObjectStoreFile {
+    fn len(&self) -> u64 {
+        RT.block_on(self.object_store.head(&self.location))
+            .unwrap()
+            .size as u64
+    }
+}
+
+impl ChunkReader for ObjectStoreFile {
+    type T = BufReader<File>;
+
+    fn get_read(&self, _: u64) -> parquet::errors::Result<Self::T> {
+        todo!()
+    }
+
+    fn get_bytes(&self, start: u64, length: usize) -> parquet::errors::Result<bytes::Bytes> {
+        let range = (start as usize)..(start as usize + length);
+        Ok(RT
+            .block_on(self.object_store.get_range(&self.location, range))
+            .unwrap())
+    }
+}
+
+impl SyncTryClone for ObjectStoreFile {
+    fn try_clone(&self) -> std::io::Result<Self>
+    where
+        Self: Sized,
+    {
+        Ok(Self {
+            object_store: self.object_store.clone(),
+            location: self.location.clone(),
+        })
+    }
+}
+
+impl WorkDir {
+    fn new(workdir: &str) -> Self {
+        if workdir.starts_with("file://") {
+            let path = Path::parse(workdir[7..].to_string()).unwrap();
+            let object_store = Arc::new(LocalFileSystem::new()) as Arc<dyn ObjectStore>;
+            log(format!("Using local filesystem at {}", path));
+            Self {
+                path,
+                object_store,
+                is_s3: false,
+            }
+        } else if workdir.starts_with("s3://") {
+            let path = Path::parse(workdir[5..].to_string()).unwrap();
+            let bucket = path.parts().next();
+            if let Some(bucket) = bucket {
+                let object_store = Arc::new(
+                    AmazonS3Builder::from_env()
+                        .with_bucket_name(bucket.as_ref().to_string())
+                        .build()
+                        .unwrap(),
+                ) as Arc<dyn ObjectStore>;
+                log(format!(
+                    "Using S3 with bucket {} and path {}",
+                    bucket.as_ref(),
+                    path
+                ));
+                Self {
+                    path,
+                    object_store,
+                    is_s3: true,
+                }
+            } else {
+                panic!("The workdir did not contain a bucket name");
+            }
+        } else {
+            panic!("workdir argument must start with file:// or s3://")
+        }
+    }
+
+    fn file(&self, path: Path) -> impl ChunkReader<T = BufReader<File>> + SyncTryClone {
+        ObjectStoreFile {
+            location: path,
+            object_store: self.object_store.clone(),
+        }
+    }
+}
+
+fn parquet_path(work_dir: &WorkDir, row_group_size: u32) -> Path {
+    work_dir
+        .path
+        .child(format!("input_rgs_{}.parquet", row_group_size))
 }
 
 static SHOULD_LOG: AtomicBool = AtomicBool::new(false);
@@ -114,9 +211,9 @@ fn log(msg: impl AsRef<str>) {
     }
 }
 
-async fn parquet_global_setup(args: &Args, work_store: &dyn ObjectStore, work_dir: &Path) {
+async fn parquet_global_setup(args: &Args, work_dir: &WorkDir) {
     let dest_path = parquet_path(work_dir, args.row_group_size);
-    if work_store.exists(&dest_path).await.unwrap() {
+    if work_dir.object_store.exists(&dest_path).await.unwrap() {
         log(format!("Using existing parquet test file at {}", dest_path));
         return;
     }
@@ -137,7 +234,11 @@ async fn parquet_global_setup(args: &Args, work_store: &dyn ObjectStore, work_di
         .set_max_row_group_size(args.row_group_size as usize)
         .build();
 
-    let (_, write) = work_store.put_multipart(&dest_path).await.unwrap();
+    let (_, write) = work_dir
+        .object_store
+        .put_multipart(&dest_path)
+        .await
+        .unwrap();
     let mut writer =
         AsyncArrowWriter::try_new(write, schema.clone(), 1024 * 1024, Some(props)).unwrap();
     for batch in &batches {
@@ -146,24 +247,10 @@ async fn parquet_global_setup(args: &Args, work_store: &dyn ObjectStore, work_di
     writer.close().await.unwrap();
 }
 
-fn parquet_setup_sync(
+fn inner_parquet_setup_sync<T: ChunkReader>(
     args: &Args,
-    _: &dyn ObjectStore,
-    work_dir: &Path,
+    file: T,
 ) -> (Vec<u32>, Option<ArrowReaderMetadata>) {
-    // TODO: Handle S3
-    let path_str = format!("/{}", parquet_path(work_dir, args.row_group_size));
-    Command::new("dd")
-        .arg(format!("of={}", path_str))
-        .arg("oflag=nocache")
-        .arg("conv=notrunc,fdatasync")
-        .arg("count=0")
-        .output()
-        .unwrap();
-
-    let path = std::path::Path::new(&path_str);
-    let file = std::fs::OpenOptions::new().read(true).open(path).unwrap();
-
     let options = ArrowReaderOptions::new().with_page_index(true);
     let metadata = ArrowReaderMetadata::load(&file, options).unwrap();
     let num_rows = metadata
@@ -188,12 +275,33 @@ fn parquet_setup_sync(
     (indices, metadata)
 }
 
+fn parquet_setup_sync(args: &Args, work_dir: &WorkDir) -> (Vec<u32>, Option<ArrowReaderMetadata>) {
+    if work_dir.is_s3 {
+        let file = work_dir.file(parquet_path(work_dir, args.row_group_size));
+        inner_parquet_setup_sync(args, file)
+    } else {
+        // Evict file from OS cache
+        let path_str = format!("/{}", parquet_path(work_dir, args.row_group_size));
+        Command::new("dd")
+            .arg(format!("of={}", path_str))
+            .arg("oflag=nocache")
+            .arg("conv=notrunc,fdatasync")
+            .arg("count=0")
+            .output()
+            .unwrap();
+        let path = std::path::Path::new(&path_str);
+        let file = std::fs::OpenOptions::new().read(true).open(path).unwrap();
+        inner_parquet_setup_sync(args, file)
+    }
+}
+
 async fn parquet_setup_async(
     args: &Args,
-    _: &dyn ObjectStore,
-    work_dir: &Path,
+    work_dir: &WorkDir,
 ) -> (tokio::fs::File, Vec<u32>, Option<ArrowReaderMetadata>) {
-    // TODO: Handle S3
+    if work_dir.is_s3 {
+        todo!()
+    }
     let path_str = format!("/{}", parquet_path(work_dir, args.row_group_size));
     Command::new("dd")
         .arg(format!("of={}", path_str))
@@ -310,12 +418,12 @@ async fn parquet_random_take_async<T: AsyncFileReader + Unpin + AsyncTryClone + 
     assert_eq!(num_rows, indices.len());
 }
 
-async fn bench_parquet(args: &Args, work_store: &dyn ObjectStore, work_dir: &Path) -> f64 {
-    parquet_global_setup(args, work_store, work_dir).await;
+async fn bench_parquet(args: &Args, work_dir: &WorkDir) -> f64 {
+    parquet_global_setup(args, work_dir).await;
     let mut total_duration = Duration::from_nanos(0);
     for _ in 0..args.iterations {
         if args.r#async {
-            let (file, indices, metadata) = parquet_setup_async(args, work_store, work_dir).await;
+            let (file, indices, metadata) = parquet_setup_async(args, work_dir).await;
             if args.iterations == 1 {
                 log("Bench Start");
             }
@@ -326,36 +434,57 @@ async fn bench_parquet(args: &Args, work_store: &dyn ObjectStore, work_dir: &Pat
                 log("Bench End");
             }
         } else {
-            let path_str = format!("/{}", parquet_path(work_dir, args.row_group_size));
-            let path = std::path::Path::new(&path_str);
-            let file = std::fs::OpenOptions::new().read(true).open(path).unwrap();
-            let file = ReadAtFile(file);
-            let (indices, metadata) = parquet_setup_sync(args, work_store, work_dir);
-            if args.iterations == 1 {
-                log("Bench Start");
-            }
-            let start = SystemTime::now();
-            parquet_random_take_sync(file, indices, metadata, args.column_index());
-            total_duration += start.elapsed().unwrap();
-            if args.iterations == 1 {
-                log("Bench End");
+            let (indices, metadata) = parquet_setup_sync(args, work_dir);
+            if work_dir.is_s3 {
+                let path = parquet_path(work_dir, args.row_group_size);
+                let file = work_dir.file(path);
+                if args.iterations == 1 {
+                    log("Bench Start");
+                }
+                let start = SystemTime::now();
+                parquet_random_take_sync(file, indices, metadata, args.column_index());
+                total_duration += start.elapsed().unwrap();
+                if args.iterations == 1 {
+                    log("Bench End");
+                }
+            } else {
+                let path_str = format!("/{}", parquet_path(work_dir, args.row_group_size));
+                let path = std::path::Path::new(&path_str);
+                let file = std::fs::OpenOptions::new().read(true).open(path).unwrap();
+                let file = ReadAtFile(file);
+                if args.iterations == 1 {
+                    log("Bench Start");
+                }
+                let start = SystemTime::now();
+                parquet_random_take_sync(file, indices, metadata, args.column_index());
+                total_duration += start.elapsed().unwrap();
+                if args.iterations == 1 {
+                    log("Bench End");
+                }
             }
         }
     }
     (total_duration.as_nanos() as f64 / (1000000.0)) / args.iterations as f64
 }
 
-fn lance_path(work_dir: &Path) -> Path {
-    work_dir.child("bench_dataset.lance")
+fn lance_path(work_dir: &WorkDir) -> Path {
+    work_dir.path.child("bench_dataset.lance")
 }
 
-async fn lance_global_setup(args: &Args, work_store: &dyn ObjectStore, work_dir: &Path) -> Dataset {
+async fn lance_global_setup(args: &Args, work_dir: &WorkDir) -> Dataset {
     let dest_path = lance_path(work_dir);
     let sample_file = dest_path.child("_latest.manifest");
-    let dest_uri = format!("/{}", dest_path);
-    if work_store.exists(&sample_file).await.unwrap() {
-        log(format!("Using existing lance dataset at {}", dest_uri));
-        return Dataset::open(&dest_uri).await.unwrap();
+    if work_dir.object_store.exists(&sample_file).await.unwrap() {
+        log(format!("Using existing lance dataset at {}", dest_path));
+        if work_dir.is_s3 {
+            return DatasetBuilder::from_uri(args.workdir.as_ref().unwrap())
+                .load()
+                .await
+                .unwrap();
+        } else {
+            let dest_uri = format!("/{}", dest_path);
+            return Dataset::open(&dest_uri).await.unwrap();
+        }
     }
 
     log(format!("Creating new lance dataset at {}", dest_path));
@@ -402,27 +531,30 @@ async fn lance_global_setup(args: &Args, work_store: &dyn ObjectStore, work_dir:
         .collect::<Vec<_>>();
     let schema = batches[0].as_ref().unwrap().schema();
     let reader = RecordBatchIterator::new(batches, schema);
+    let dest_uri = if work_dir.is_s3 {
+        args.workdir.as_ref().unwrap().to_string()
+    } else {
+        format!("/{}", dest_path)
+    };
+    dbg!(&dest_uri);
     Dataset::write(reader, &dest_uri, None).await.unwrap()
 }
 
-async fn lance_setup(
-    dataset: &Dataset,
-    args: &Args,
-    work_store: Arc<dyn ObjectStore>,
-    work_dir: &Path,
-) -> (Dataset, Vec<u64>) {
+async fn lance_setup(dataset: &Dataset, args: &Args, work_dir: &WorkDir) -> (Dataset, Vec<u64>) {
     let dest_path = Path::parse(lance_path(work_dir)).unwrap();
 
-    let path_str = format!("/{}", dest_path);
-    for entry in glob::glob(&path_str).unwrap() {
-        let path = entry.unwrap();
-        Command::new("dd")
-            .arg(format!("of={}", path.display()))
-            .arg("oflag=nocache")
-            .arg("conv=notrunc,fdatasync")
-            .arg("count=0")
-            .output()
-            .unwrap();
+    if !work_dir.is_s3 {
+        let path_str = format!("/{}", dest_path);
+        for entry in glob::glob(&path_str).unwrap() {
+            let path = entry.unwrap();
+            Command::new("dd")
+                .arg(format!("of={}", path.display()))
+                .arg("oflag=nocache")
+                .arg("conv=notrunc,fdatasync")
+                .arg("count=0")
+                .output()
+                .unwrap();
+        }
     }
 
     let num_rows = dataset.count_rows().await.unwrap();
@@ -438,8 +570,12 @@ async fn lance_setup(
         dataset.take(&indices, &schema).await.unwrap();
         dataset.clone()
     } else {
-        let url = format!("file:///{}", dest_path);
-        DatasetBuilder::from_uri(&url).load().await.unwrap()
+        let dest_uri = if work_dir.is_s3 {
+            args.workdir.as_ref().unwrap().to_string()
+        } else {
+            format!("/{}", dest_path)
+        };
+        DatasetBuilder::from_uri(&dest_uri).load().await.unwrap()
     };
 
     (dataset, indices)
@@ -452,11 +588,11 @@ async fn lance_random_take(dataset: &Dataset, indices: Vec<u64>, col: u32) {
     assert_eq!(batch.num_rows(), indices.len());
 }
 
-async fn bench_lance(args: &Args, work_store: Arc<dyn ObjectStore>, work_dir: &Path) -> f64 {
-    let dataset = lance_global_setup(args, &work_store, work_dir).await;
+async fn bench_lance(args: &Args, work_dir: &WorkDir) -> f64 {
+    let dataset = lance_global_setup(args, work_dir).await;
     let mut total_duration = Duration::from_nanos(0);
     for _ in 0..args.iterations {
-        let (dataset, indices) = lance_setup(&dataset, args, work_store.clone(), work_dir).await;
+        let (dataset, indices) = lance_setup(&dataset, args, work_dir).await;
         if args.iterations == 1 {
             log("Bench Start");
         }
@@ -484,19 +620,12 @@ async fn main() {
         .map(|s| s.as_str())
         .unwrap_or("file:///tmp")
         .to_string();
-    let (work_store, work_dir) = if workdir.starts_with("file://") {
-        let work_dir = Path::parse(workdir[7..].to_string()).unwrap();
-        let work_store = Arc::new(LocalFileSystem::new());
-        (work_store, work_dir)
-    } else if workdir.starts_with("s3://") {
-        todo!()
-    } else {
-        panic!("workdir argument must start with file:// or s3://")
-    };
+
+    let work_dir = WorkDir::new(&workdir);
 
     let avg_duration_ms = match args.format {
-        Format::Parquet => bench_parquet(&args, work_store.as_ref(), &work_dir).await,
-        Format::Lance => bench_lance(&args, work_store, &work_dir).await,
+        Format::Parquet => bench_parquet(&args, &work_dir).await,
+        Format::Lance => bench_lance(&args, &work_dir).await,
     };
 
     println!("{}", avg_duration_ms);
