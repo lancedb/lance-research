@@ -37,7 +37,7 @@ use random_take_bench::r#async::{take as async_take, TryClone as AsyncTryClone};
 use random_take_bench::sync::{take as sync_take, TryClone as SyncTryClone};
 
 /// Simple program to greet a person
-#[derive(Parser, Debug)]
+#[derive(Parser, Clone, Debug)]
 #[command(name="random-take", about="A benchmark for tabular file formats", version, long_about = None)]
 struct Args {
     /// What file format to benchmark
@@ -103,6 +103,7 @@ enum ColumnType {
     Vector,
 }
 
+#[derive(Clone, Debug)]
 struct WorkDir {
     object_store: Arc<dyn ObjectStore>,
     path: Path,
@@ -434,20 +435,27 @@ async fn bench_parquet(args: &Args, work_dir: &WorkDir) -> f64 {
                 log("Bench End");
             }
         } else {
-            let (indices, metadata) = parquet_setup_sync(args, work_dir);
             if work_dir.is_s3 {
-                let path = parquet_path(work_dir, args.row_group_size);
-                let file = work_dir.file(path);
-                if args.iterations == 1 {
-                    log("Bench Start");
-                }
-                let start = SystemTime::now();
-                parquet_random_take_sync(file, indices, metadata, args.column_index());
-                total_duration += start.elapsed().unwrap();
-                if args.iterations == 1 {
+	        let iterations = args.iterations;
+	        let args = (*args).clone();
+		let work_dir = (*work_dir).clone();
+	        let duration = tokio::task::spawn_blocking(move || {
+                    let (indices, metadata) = parquet_setup_sync(&args, &work_dir);
+                    let path = parquet_path(&work_dir, args.row_group_size);
+                    let file = work_dir.file(path);
+                    if args.iterations == 1 {
+                        log("Bench Start");
+                    }
+                    let start = SystemTime::now();
+                    parquet_random_take_sync(file, indices, metadata, args.column_index());
+		    start.elapsed().unwrap()
+                }).await.unwrap();
+		total_duration += duration;
+                if iterations == 1 {
                     log("Bench End");
                 }
             } else {
+                let (indices, metadata) = parquet_setup_sync(args, work_dir);
                 let path_str = format!("/{}", parquet_path(work_dir, args.row_group_size));
                 let path = std::path::Path::new(&path_str);
                 let file = std::fs::OpenOptions::new().read(true).open(path).unwrap();
@@ -502,7 +510,7 @@ async fn lance_global_setup(args: &Args, work_dir: &WorkDir) -> Dataset {
                 for col_index in 0..rb.num_columns() {
                     let col = rb.column(col_index);
                     if col.data_type().is_nested() {
-                        let fixed_list_type = fixed_size_list_type(768, DataType::Float64);
+                        let fixed_list_type = fixed_size_list_type(768, DataType::Float32);
                         let new_field = Field::new("vector", fixed_list_type, true);
                         let mut new_schema = schema.as_ref().clone();
                         new_schema.remove(col_index);
@@ -512,7 +520,7 @@ async fn lance_global_setup(args: &Args, work_dir: &WorkDir) -> Dataset {
                                 .unwrap(),
                         );
                         let new_col = FixedSizeListArray::try_new(
-                            Arc::new(Field::new("item", DataType::Float64, true)),
+                            Arc::new(Field::new("item", DataType::Float32, true)),
                             768,
                             col.as_fixed_size_list_opt().unwrap().values().clone(),
                             col.nulls().cloned(),
