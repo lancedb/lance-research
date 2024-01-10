@@ -8,7 +8,7 @@ setup:
 # Generate the datasets.
 #
 # The Laion dataset requires the environment variable `LAION_1M_DATA` to be set
-# to the path of the downloaded data in ../datasets/laion_5b/loader.py.
+# to the same path used to download data in ../datasets/laion_5b/loader.py.
 #
 # You can generate a specific dataset by passing the `--dataset` flag to
 # datagen.py.
@@ -22,7 +22,7 @@ bench:
 	python postprocess.py
 .PHONY: bench
 
-# Build up test data and ancilary files.
+# Clean up test data and ancilary files.
 clean:
 	rm -rf *.bbl *.blg *.fls *.html *.pdf data
 .PHONY: clean
