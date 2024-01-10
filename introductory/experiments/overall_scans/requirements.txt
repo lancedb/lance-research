@@ -1,0 +1,7 @@
+--extra-index-url https://pypi.fury.io/arrow-nightlies/ # For Nightly PyArrow
+duckdb==0.9.0
+pylance==0.9.2
+# Can use 15.0.0 once it is released.
+pyarrow==15.0.0.dev338
+pytest==7.4.3
+pytest-benchmark==4.0.0
