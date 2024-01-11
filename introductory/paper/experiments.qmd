@@ -26,6 +26,7 @@ data <- read.csv("../experiments/overall_scans/results.csv")
 
 data$format <- tools::toTitleCase(data$format)
 data$dataset <- ifelse(data$dataset == "laion", "Laion", "TPC-H lineitem")
+data$rows_per_sec <- data$dataset_num_rows / data$scan_time
 ```
 
 
@@ -34,18 +35,39 @@ data$dataset <- ifelse(data$dataset == "laion", "Laion", "TPC-H lineitem")
 #| fig-cap: Size of datasets used in scan benchmarks
 data |>
     filter(row_group_size == 102400) |>
-    select(dataset, format, dataset_size_bytes) |>
-    mutate(dataset_size_bytes = dataset_size_bytes / 1024 / 1024 / 1024) |>
-    pivot_wider(names_from = format, values_from = dataset_size_bytes) |>
-    mutate(Ratio = Lance / Parquet) |>
+    mutate(
+        size = dataset_size_bytes / 1024 / 1024 / 1024,
+        row_size = dataset_size_bytes / 1024 / dataset_num_rows,
+        rows = dataset_num_rows / 1000 / 1000,
+    ) |>
+    select(dataset, rows, format, size, row_size) |>
+    pivot_wider(names_from = format, values_from = c("row_size", "size")) |>
+    mutate(Ratio = size_Lance / size_Parquet) |>
     gt(rowname_col = "dataset") |>
     tab_spanner(
         label="On-disk size (GB)",
-        columns=c("Lance", "Parquet")
+        columns=c("size_Lance", "size_Parquet")
+    ) |>
+    tab_spanner(
+        label="Row size (KB)",
+        columns=c("row_size_Lance", "row_size_Parquet")
     ) |>
     fmt_number(
-        columns = c("Lance", "Parquet", "Ratio"),
+        columns = c("rows"),
+        decimals = 2
+    ) |>
+    fmt_number(
+        columns = c("size_Lance", "size_Parquet", "Ratio"),
         decimals = 1
+    ) |>
+    fmt_number(
+        columns = c("row_size_Lance", "row_size_Parquet"),
+        decimals = 3
+    ) |>
+    cols_label(
+        ends_with("Parquet") ~ "Parquet",
+        ends_with("Lance") ~ "Lance",
+        rows ~ "Rows (M)"
     )
 ```
 
@@ -55,14 +77,14 @@ It's worth noting that Lance's default setting is for row group size of 1024. Th
 
 ```{r}
 #| label: fig-full-scan-runtime
-#| fig-cap: Time to scan full datasets.
+#| fig-cap: Performance of full dataset scan.
 #| fig-height: 4
 #| fig-width: 5
-ggplot(data, aes(x = format, y = scan_time)) +
+ggplot(data, aes(x = format, y = rows_per_sec)) +
     geom_col() +
-    facet_grid(dataset ~ row_group_size, labeller = "label_both") +
+    facet_grid(dataset ~ row_group_size, labeller = "label_both", scales = "free_y") +
     labs(
       x="Format",
-      y="Runtime (s)",
+      y="Rows scanner per second",
      )
 ```
