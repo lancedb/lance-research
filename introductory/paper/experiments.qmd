@@ -24,6 +24,8 @@ library(ggplot2)
 library(tidyr)
 library(dplyr)
 
+ggplot2::theme_set(ggplot2::theme_minimal())
+
 # data <- read.csv("introductory/experiments/overall_scans/results.csv")
 data <- read.csv("../experiments/overall_scans/results.csv")
 
@@ -109,7 +111,8 @@ For the small `id` column, both Parquet readers have a slight edge over Parquet.
 ```{r}
 #| label: fig-late-mat-runtime
 #| fig-cap: Scan time for early versus late materialization.
-#| fig-height: 4.25
+#| fig-height: 3.5
+#| fig-width: 5
 ggplot(runtime_results, aes(color=library, linetype=materialization_type, x=selectivity, y=runtime)) +
  geom_line() +
  facet_wrap(~ columns, scales = "free_y", labeller = "label_both") +
@@ -131,7 +134,8 @@ the case of the `img` column. However, if the filter results is more broken up, 
 ```{r}
 #| label: fig-late-mat-total-bytes
 #| fig-cap: Bytes read for early versus late materialization.
-#| fig-height: 4
+#| fig-height: 3.5
+#| fig-width: 5
 ggplot(io_results, aes(color=library, linetype=materialization_type, x=selectivity, y=total_bytes)) +
  geom_line() +
  facet_wrap(~ columns, scales = "free_y", labeller = "label_both") +
