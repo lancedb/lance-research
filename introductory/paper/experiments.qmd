@@ -4,7 +4,7 @@ execute:
 ---
 # Experiments
 
-## Scattered Row-based Access
+## Random Row-based Access
 
 A "take" operation is a common file operation that selects rows from a file by row number.  This operation is
 common when using secondary indices, which are indices that do not require the data to be ordered in any
@@ -17,23 +17,26 @@ If the row numbers are scattered throughout the file then the take operation tes
 to support small random access into the file.  This is something that columnar formats have traditionally
 struggled with since an emphasis on encodings and compression increases the amount of data that must be fetched
 to read a single cell.  As discussed earlier, Lance has been designed to prioritize this operation by ensuring
-that random access to rows remains possible without requiring complex decoding.
+that random access to rows remains possible without requiring complex decoding or read amplification.
 
 We evaluate Lance's performance on this type of operation by selecting K rows at random from a single file
-containing the first million rows of the laion-5b english dataset.  We retrieve a single column of data.  This
+containing the first million rows of the LAION-5B[@laion2022] English dataset.  We retrieve a single column of data.  This
 column is either the similarity column (an 8-byte double value) or the image embedding (a fixed size list where
 each value is a vector with 768 2-byte fp16 values).  All latency numbers are assuming the the file metadata is
 cached in memory.  Cold start cases (where the metadata is not cached) add a small amount of latency to both
 formats that does not depend on the other parameters.
 
-One challenge we encountered is that parquet libraries do not have builtin support for this type of operation.
-We created a custom take routine for both parquet-rs and parquet-cpp.  The source code for this routine is
-available at ?.  To emulate lance we created a thread task per row group.  Parquet files were written without
-compression and with 100,000 rows per row group as we found these settings to perform best.  Latency
-measurements are averaged across many runs.  I/O measurements are representative samples, since the actual I/O
-required varies slightly based on row id selection.
+One challenge we encountered is that Parquet libraries do not have builtin support for this type of operation.
+We created a custom take routine for both parquet-rs and parquet-cpp[^1].  To emulate Lance we created a thread
+task per row group.  Parquet files were written without compression and with 100,000 rows per row group as we
+found these settings to perform best.  Latency measurements are averaged across many runs.  I/O measurements
+are representative samples, since the actual I/O required varies slightly based on row id selection.
+
+[^1]: The source code is available at https://github.com/lancedb/lance-research/tree/main/introductory/experiments/random-take
 
 ```{python}
+#| label: fig-random-take-latency
+#| echo: false
 import matplotlib.pyplot as plt
 import pyarrow.csv as csv
 
@@ -76,14 +79,16 @@ plt.legend()
 plt.show()
 ```
 
-The results are in figure ?.  The lance format has significatly lower latency than parquet in most situations.
-When reading the 8-byte double column there are only a few parquet data pages and parquet quickly ends up reading
-the entire column.  When reading large columns there are many data pages the data page overread hurts parquet
-significantly.  When taking a large number of rows from a small column lance issues a many small reads which hurts
+The results are in @fig-random-take-latency.  The Lance format has significatly lower latency than Parquet in most situations.
+When reading the 8-byte double column there are only a few Parquet data pages and Parquet quickly ends up reading
+the entire column.  When reading large columns there are many data pages the data page overread hurts Parquet
+significantly.  When taking a large number of rows from a small column Lance issues many small reads which hurts
 performance.  This suggests that coalescing I/O requests may be a useful addition to Lance.  Parquet, since it
 reads entire pages at a time, is effectively coalesced already.
 
 ```{python}
+#| label: fig-random-take-io
+#| echo: false
 import matplotlib.pyplot as plt
 import pyarrow.csv as csv
 
@@ -127,6 +132,8 @@ plt.show()
 ```
 
 ```{python}
+#| label: fig-random-take-iops
+#| echo: false
 import matplotlib.pyplot as plt
 import pyarrow.csv as csv
 
@@ -163,16 +170,18 @@ x = parquet_vector["take_size"]
 y = parquet_vector["iops"]
 plt.plot(x, y, marker='o', color="C1", ls=":", label = "parquet (vector)")
 
-ax.set_xticks(lance_double["take_size"])
+ax.set_xticks(Lance_double["take_size"])
 
 plt.legend()
 ```
 
-Figures ? and ? show the I/O characteristics of the random take operation.  In both Lance and Parquet the latency
-was highly correlated with the amount of bytes read, suggesting the operation is I/O bound in both formats.  The
-large number of IOPS required by lance reinforces the need for coalescing.
+Figures @fig-random-take-io and @fig-random-take-iops show the I/O characteristics of the random take operation.
+In both Lance and Parquet the latency was highly correlated with the amount of bytes read, suggesting the
+operation is I/O bound in both formats.  The large number of IOPS required by Lance reinforces the need for coalescing.
 
 ```{python}
+#| label: fig-random-take-filesystem
+#| echo: false
 import pandas as pd
 import matplotlib.pyplot as plt
 import pyarrow.csv as csv
@@ -224,7 +233,7 @@ plt.show()
 
 Performance was also measured against different filesystems.  The previous results were using a fast local (NVME)
 disk.  The take performance was also measured on NFS and S3 which are two popular cloud storage technologies.  The
-results of this experiment are in figure ?.  S3 has a particularly high per-operation overhead and Lance's performance
-suffered significantly as a result.
+results of this experiment are in figure @fig-random-take-filesystem.  S3 has a particularly high per-operation
+overhead and Lance's performance suffered significantly as a result.
 
 ## Scanning
