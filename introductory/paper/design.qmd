@@ -1,17 +1,19 @@
 # Design
 
 Lance was created as a data storage solution designed to handle emerging AI workloads
-such as autonomous driving cars, LLMs, recommendation systems, RAG, and many others.
+such as autonomous driving cars, LLMs, recommendation systems, and RAG.
 These workloads have unique characteristic that cause existing storage solutions, many
 of them based on popular columnar formats like parquet and orc, to perform poorly.
 This section describes common patterns in these systems that are not handled well by
 existing formats.  These patterns motivated the design of the Lance format.
 
-A significant aspect of AI workloads are that these workloads often have large columns.
+A significant aspect of AI workloads is that these workloads often have large columns.
 For example, LLMs and recommendation systems make extensive use of vector embeddings.
 ViT-L, a common vector embedding, contains 768 floating point values per row [citation needed].
-Computer vision workloads often prefer that images are stored along the metadata and these
-images are large variable length binary columns that are already compressed.
+Graphical workloads often contain images are stored along the metadata and these
+images are large variable length binary columns that are already compressed.  Workloads
+that process sensor data can often contain large structures such as lidar data or signal
+waveforms.
 
 AI workloads have seen secondary indices become essential for searching vector columns.
 Secondary vector indices such as IVF_PQ and HNSW are common approaches for handling
@@ -43,25 +45,28 @@ Coordination mechanisms are described which can be used to achieve ACID data tra
 ## Apache Arrow Compatibility
 
 Lance makes extensive use of the Apache Arrow columnar layout for its data.  Lance uses
-Arrow's type system for its table format and Lance libraries use Arrow as the in-memory
-representation.
+Arrow's type system for both its file format and its table format.  Lance libraries use
+Arrow as the in-memory representation.  This enables seamless integration with tools like
+Apache Datafusion[@datafusion] or DuckDb[@duckdb].
 
 ## File Layout
 
 The Lance file format is a part of the table format.  However, a Lance file is also fully
 self describing and can stand on its own if needed.  Lance files serialize Arrow data into
-a format suitable for storage.  Compared with other columnar formats Lance files have a
-stronger emphasis on sub-linear random access and, as a result, use simpler encodings and
-avoid compression.  Lance files are also designed to support small row groups with as little
+a format suitable for storage.  Like other columnar systems such as Artus (see @procella2019)
+and BtrBlocks (see @btrblocks), Lance avoids generic compression in favor of simple encodings.
+Furthermore, while those systems allow reading a single row without *decoding* a full page,
+Lance includes encodings that can read only the relevant portions of a page to retrieve a
+single value.  Lance files are also designed to support small row groups with as little
 overhead as possible.
 
 ### Overall Structure
 
 A Lance file starts with a sequence of row groups.  Each row group consists of a sequence
-of columns.  After the last row group there is a metadata block containing the page table
-and page statistics.  After this there is an optional manifest block which contains the
-schema of the data.  Finally, there is a footer, which contains the file version, the position
-of the metadata block, and a magic number.
+of columns.  After the last row group there is a metadata block.  This metadata includes
+column metadata (such as page locations) and statistics (i.e. zone maps).  After this there
+is an optional manifest block which contains the schema of the data.  Finally, there is a
+footer, which contains the file version, the position of the metadata block, and a magic number.
 
 ### Row Groups
 
@@ -71,10 +76,10 @@ rows.  Since each column is written contiguously within a row group we need to b
 buffer an entire row group in memory before writing it to disk.  Since rows within an AI
 workload are so large, row group sizes in Lance tend to be much smaller than other formats.
 
-For example, the laion-5b dataset is a popular dataset used to train image generation models.
-The first 1024 rows of this dataset, in the Arrow in-memory layout, occupy X bytes of RAM.
-This is equivalent to Y rows of TPC-H data.  Row group sizes of 1024 are not uncommon when
-working with Lance data.
+For example, the LAION-5B dataset is a popular dataset used to train image generation models.
+The first 1024 rows of this dataset, in the Arrow in-memory layout, occupy 3,556 KiB of RAM.
+This is roughly equivalent to 25,000 rows of TPC-H data.  Row group sizes of 1024 are not
+uncommon when working with Lance data.
 
 The disadvantage of smaller row groups is that columns are broken into smaller chunks of
 contiguous data.  This means that column reads must be broken into a large number of
