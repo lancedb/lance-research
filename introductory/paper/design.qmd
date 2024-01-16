@@ -47,7 +47,8 @@ Coordination mechanisms are described which can be used to achieve ACID data tra
 Lance makes extensive use of the Apache Arrow columnar layout for its data.  Lance uses
 Arrow's type system for both its file format and its table format.  Lance libraries use
 Arrow as the in-memory representation.  This enables seamless integration with tools like
-Apache Datafusion[@datafusion] or DuckDb[@duckdb].
+Apache Datafusion[@datafusion] or DuckDb[@duckdb].  In addition, Lance's encodings are
+designed to be as similar to the Arrow layout as possible so as to minimize decoding cost.
 
 ## File Layout
 
