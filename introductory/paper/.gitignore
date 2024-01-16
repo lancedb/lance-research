@@ -1,2 +1,6 @@
 paper.tex
 *.pdf
+.ipynb_checkpoints/
+*.ipynb
+*.html
+*_files/
