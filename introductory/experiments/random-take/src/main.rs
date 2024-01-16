@@ -446,6 +446,8 @@ async fn bench_parquet(args: &Args, work_dir: &WorkDir) -> f64 {
     for _ in 0..args.iterations {
         if args.r#async {
             let (file, indices, metadata) = parquet_setup_async(args, work_dir).await;
+            // We leave "Bench Start" and "Bench End" messages so they can be
+            // picked up when we are using strace to count IOPS.
             if args.iterations == 1 {
                 log("Bench Start");
             }
