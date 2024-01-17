@@ -23,6 +23,7 @@ def lance_scan(ds, columns, predicate, late_materialization):
         filter=predicate,
         use_late_materialization=late_materialization,
         use_stats=False,
+        batch_size=1024 * 10,
     ).to_batches()
     num_rows = 0
     for batch in reader:
@@ -42,13 +43,13 @@ def pyarrow_scan(ds, columns, predicate):
 
 
 # Runtime benchmarks
-@pytest.mark.parametrize("project", ["id", "vec", "img"])
-@pytest.mark.parametrize("min_value", [10000, 25000, 50000, 75000, 90000])
-@pytest.mark.parametrize("library", ["lance", "pyarrow", "datafusion"])
+@pytest.mark.parametrize("project", ["int", "vec", "img"])
+@pytest.mark.parametrize("min_value", [10 * 1024, 25 * 1024, 50 * 1024, 75 * 1024, 90 * 1024])
+@pytest.mark.parametrize("library", ["Lance", "PyArrow", "DataFusion"])
 @pytest.mark.parametrize("late_materialization", [True, False])
 def test_runtime(benchmark, project, min_value, library, late_materialization):
     columns = [project]
-    if library == "lance":
+    if library == "Lance":
         ds = lance.dataset("data/lance")
         num_rows = benchmark(
             lance_scan,
@@ -57,7 +58,7 @@ def test_runtime(benchmark, project, min_value, library, late_materialization):
             predicate=f"id >= {min_value}",
             late_materialization=late_materialization,
         )
-    elif library == "pyarrow":
+    elif library == "PyArrow":
         if late_materialization:
             pytest.skip("PyArrow does not support late materialization")
         ds = pa_ds.dataset("data/parquet", format="parquet")
@@ -67,7 +68,7 @@ def test_runtime(benchmark, project, min_value, library, late_materialization):
             columns,
             predicate=pa_ds.field("id") >= min_value,
         )
-    elif library == "datafusion":
+    elif library == "DataFusion":
         if columns == ["vec"]:
             # See: https://github.com/apache/arrow-datafusion/issues/8742
             pytest.skip("DataFusion does not support vector columns in projection")
@@ -81,7 +82,7 @@ def test_runtime(benchmark, project, min_value, library, late_materialization):
             explain=False,
         )
 
-    assert num_rows == 100_000 - min_value
+    assert num_rows == 1024 * 100 - min_value
 
 
 class IOResult(NamedTuple):
@@ -203,8 +204,8 @@ def measure_datafusion_io(
     )
 
 
-@pytest.mark.parametrize("project", ["id", "vec", "img"])
-@pytest.mark.parametrize("min_value", list(range(0, 100_000, 2_500)))
+@pytest.mark.parametrize("project", ["int", "vec", "img"])
+@pytest.mark.parametrize("min_value", list(range(0, 100 * 1024, 2 * 1024)))
 @pytest.mark.parametrize("library", ["Lance", "PyArrow", "DataFusion"])
 @pytest.mark.parametrize("late_materialization", [True, False])
 def test_io(io_results, project, min_value, library, late_materialization):

@@ -1,2 +1,4 @@
 data
 *.pyc
+venv
+.benchmarks

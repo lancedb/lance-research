@@ -14,6 +14,7 @@ datagen:
 # Run the benchmarks.
 bench:
 	pytest bench.py -v --benchmark-save=data
+	python postprocess.py
 .PHONY: bench
 
 # Build up test data and ancilary files.

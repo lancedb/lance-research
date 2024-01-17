@@ -9,7 +9,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pyarrow.dataset as ds
 
-nrows = 100_000
+nrows = 100 * 1024
 ndims = 768
 
 
@@ -28,6 +28,7 @@ if __name__ == "__main__":
     tab = pa.table(
         {
             "id": pa.array(range(nrows)),
+            "int": pa.array((random.randint(0, nrows) for _ in range(nrows)), pa.int64()),
             "vec": vectors,
             "img": pa.array([random.randbytes(40 * 1024) for _ in range(nrows)]),
         }
@@ -54,10 +55,9 @@ if __name__ == "__main__":
                 write_statistics=with_stats,
                 write_page_index=with_stats,
             ),
-            # Need smaller row groups to fit the images.
             max_rows_per_group=10 * 1024,
         )
 
     # We can disable use of statistics at read time for Lance
     logging.info("Writing Lance")
-    lance.write_dataset(tab, "data/lance")
+    lance.write_dataset(tab, "data/lance", max_rows_per_group=10 * 1024)
