@@ -138,11 +138,11 @@ abstract: |
 
 # Future work
 
-- Encodings and compression
-  - Tensor
-  - RLE / Delta
-  - Float compression
-  - Multi-pass compression (i.e. [@procella2019])
+In this paper, we demonstrated Lance's optimizations for vector and unstructed data. We compared this to existing data lake formats, such as Parquet.
+
+Lance currently does not support null values in most data types. We will be implementing this, while attempting to maintain the sliceability of buffers to the extent possible.
+
+To be useful in a broader set of use cases, Lance will need additional encoding schemes. While plain encodings works well for vector embeddings and compressed binary blobs, other data types will require encodings that provide compression, as seen in other state-of-the-art storage systems. Like Artus (@procella2019), Lance will prefer encodings that support single-value and range access, and avoid those that require decoding full pages. In additional, we may also implement novel encodings to handle other AI data types, such as sparse tensors.
 
 # Conclusion
 
