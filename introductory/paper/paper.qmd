@@ -131,6 +131,7 @@ abstract: |
 {{< include intro.qmd >}}
 
 # Related work
+{{< include related_work.qmd >}}
 
 {{< include design.qmd >}}
 

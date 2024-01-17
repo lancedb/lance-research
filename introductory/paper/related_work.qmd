@@ -1,0 +1,26 @@
+ The open-source file formats have been widely adopted and proliferated for the past 10 years. 
+ Apache Haddop first introduced two row-oriented formats, SequenceFile[@] and Avro[@]. Then Meta 
+ released a column-oriented format for Hadoop called RCFile[@]. Shortly after that, Meta refined 
+ RCFile to ORC (Optimized Record Columnar File) format [@]. Twitter and Cloudera andannounced
+ the first version of parguet [@] 1 month after that. Ever since then, column-oriented file 
+ formats become dominant in the big data ecosystems and they are supported by most data processing 
+ platforms.
+
+ Columnar file formats have been under active research and devlopment in recent years. Specifically 
+ with the purpose to better serve a specific group of applications, such as computer vision, scientific 
+ computations. There are scientific data storage formats for HPC workloads, including HDF5[@],BP5[@],
+ NetCDF[@],and Zarr[@].They target heterogeneous data that has complex file structures,types, and 
+ organizations.Their data is typically multi-dimensional arrays and not support column-wise encoding.
+
+ Arrow represents the in-memory colmnar format designed for efficient exchange of data with limited 
+ serialization between different application processs. Arrow can support random access thus it is a
+ good candidate for long-term disk storage.
+
+ Recent data storage solutions for AI tend to combine the data lake with data warehouse, such as the Delta
+ Lake [@], Apache Iceberg[@] and Apache Hudi[@]. This requires a data format that not only can provide
+ benefits such as efficient storage, performant access, but also can combine the metadata management.
+
+ Another group of research goes into learning the column layouts given the workload knowledge and performance
+ requirements[@Manos]. With a combination of OLAP and serving workloads[@procella2019], along with the underlying hardware, 
+ making a priori decision of the dataset layout is suboptimal.  Tuning knobs such as how to physically order
+ data, column density level and buffer space allocation for updates, can be decided for specific workloads.
