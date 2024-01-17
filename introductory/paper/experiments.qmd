@@ -170,7 +170,7 @@ x = parquet_vector["take_size"]
 y = parquet_vector["iops"]
 plt.plot(x, y, marker='o', color="C1", ls=":", label = "parquet (vector)")
 
-ax.set_xticks(Lance_double["take_size"])
+ax.set_xticks(lance_double["take_size"])
 
 plt.legend()
 ```
