@@ -138,13 +138,15 @@ abstract: |
 
 # Future work
 
-In this paper, we demonstrated Lance's optimizations for vector and unstructed data. We compared this to existing data lake formats, such as Parquet.
+In this paper, we demonstrated Lance's optimizations for vector and large binary data. We compared this to existing data lake formats, such as Parquet. Future improvements are needed to the Lance format, both to match the existing capabilities of Parquet and similar formats, as well as support additional AI use cases.
 
-Lance currently does not support null values in most data types. We will be implementing this, while attempting to maintain the sliceability of buffers to the extent possible.
+First, Lance currently does not support null values in most data types. We will be implementing this, while attempting to maintain the sliceability of buffers to the extent possible.
 
 To be useful in a broader set of use cases, Lance will need additional encoding schemes. While plain encodings works well for vector embeddings and compressed binary blobs, other data types will require encodings that provide compression, as seen in other state-of-the-art storage systems. Like Artus (@procella2019), Lance will prefer encodings that support single-value and range access, and avoid those that require decoding full pages. In additional, we may also implement novel encodings to handle other AI data types, such as sparse tensors.
 
 As noted earlier, Lance does not support varying the number of rows per a page by column. This can be sub-optimal when some columns are small (such as a float32 column) while others are very large (such as a 1MB image column). A the default of 1024 rows, the page of floats will exceedingly small, even without compression. Meanwhile the image column would be near the upper limit of what an application would want to buffer in memory before flushing a row group to disk. Therefore, in the future we may allow varing page sizes by column type.
+
+In addition to improving the file format, additional improvements are needed in the table format. The current state and areas of improvement will be discussed in a future paper.
 
 # Conclusion
 
