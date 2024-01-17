@@ -40,7 +40,7 @@ data |>
         row_size = dataset_size_bytes / 1024 / dataset_num_rows,
         rows = dataset_num_rows / 1000 / 1000,
     ) |>
-    select(dataset, rows, format, size, row_size) |>
+    select(dataset, format, size, row_size) |>
     pivot_wider(names_from = format, values_from = c("row_size", "size")) |>
     mutate(Ratio = size_Lance / size_Parquet) |>
     gt(rowname_col = "dataset") |>
@@ -49,12 +49,8 @@ data |>
         columns=c("size_Lance", "size_Parquet")
     ) |>
     tab_spanner(
-        label="Row size (KB)",
+        label="KB / row",
         columns=c("row_size_Lance", "row_size_Parquet")
-    ) |>
-    fmt_number(
-        columns = c("rows"),
-        decimals = 2
     ) |>
     fmt_number(
         columns = c("size_Lance", "size_Parquet", "Ratio"),
@@ -66,8 +62,7 @@ data |>
     ) |>
     cols_label(
         ends_with("Parquet") ~ "Parquet",
-        ends_with("Lance") ~ "Lance",
-        rows ~ "Rows (M)"
+        ends_with("Lance") ~ "Lance"
     )
 ```
 
