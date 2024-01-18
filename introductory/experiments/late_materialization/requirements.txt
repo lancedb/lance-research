@@ -1,0 +1,7 @@
+# TODO: fix version of pylance
+fsspec==2023.12.2
+maturin==0.14.17
+pyarrow==14.0.1
+pylance
+pytest==7.4.3
+pytest-benchmark==4.0.0

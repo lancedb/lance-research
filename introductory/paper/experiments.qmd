@@ -238,6 +238,9 @@ overhead and Lance's performance suffered significantly as a result.
 
 ## Scanning
 
+Scanning data is used in both OLAP queries and Data Loader workloads. As a comparison we'll be using Parquet, a common OLAP format, and TFRecord, a common data Loader format.
+
+There are two major optimizations in Lance aimed at vector and unstructured data. The first is late materialization in queries with filters, which can save IO calls. The second are strong alignment of the on-disk format with the in-memory format.
 
 ### Overall scan performance
 
@@ -252,6 +255,8 @@ library(gt)
 library(ggplot2)
 library(tidyr)
 library(dplyr)
+
+ggplot2::theme_set(ggplot2::theme_minimal())
 
 # data <- read.csv("introductory/experiments/overall_scans/results.csv")
 data <- read.csv("../experiments/overall_scans/results.csv")
@@ -298,3 +303,148 @@ ggplot(data, aes(x = format, y = scan_time)) +
       y="Runtime (s)",
      )
 ```
+
+
+### Late materialization
+
+Late materialization can reduce IO costs by deferring the decision whether to load certain cells depending on the result of a filter. This is especially important when the projected columns are large, since the potential IO cost savings are substantial.
+
+Late materialization is an engine optimization, and can be applied to any columnar format. However, the performance benefit of this optimization depends on the page structure of the format. If pages are large and cannot be sliced, then late materialization only will be beneficial to the extent that whole pages can be skipped. Put another way, any IO savings brought by late materialization can be outweighted by the read amplification from the serialization format. In Lance, vector and binary columns are laid out in a flat layout, which can be sliced at the cell-level. Therefore, Lance can read these large columns with zero read amplication, if we choose to. In practice, there is often a minimum IO size used that means that some small amount of read amplification is actually beneficial to reduce the total number of IO calls.
+
+To demonstrate the performance benefit, we measured the performance of early versus late materialization strategies in Lance and Parquet. We compare against both PyArrow and DataFusion's Parquet scanners. PyArrow is commonly used in Parquet benchmarks in the literature but, unlike DataFusion, lacks a late materialization implementation. Therefore, we only provide results for late materialization in DataFusion. DataFusion currently does not support scanning vector columns (`FixedSizeList` in Arrow parlance), so it's results for vector embeddings are omitted as well.
+
+As a test dataset, we used a sythetic dataset with three columns of varing cell sizes:
+
+* `id`, an incrementing int64 column (8 bytes wide)
+* `int`, a random int64 column (8 bytes wide)
+* `vec`, a 768-dimensional 32-bit vector (~3KB wide)
+* `img`, a random 40KB binary blob (40KB wide)
+
+Vector embeddings (which `vec` represents) and compressed images (which `img` represents) are examples where compression doesn't help much but the cost of read amplification is high. There might be other types of columns, such as text documents, where there is a large size and cross-cell compression might be useful. But within-cell compression is likely to be a good tradeoff when considered with the requirement of low read-amplication.
+
+The tables are written with 102,400 rows, with ten row groups of 10,240 rows. To isolate the effect of late materialization separate from statistics-based pruning, we write Parquet files without statistics. In Lance, we can disable the use of statistics when performing the scan.
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(gt)
+library(tidyr)
+
+# data_dir <- "introductory/experiments/late_materialization/"
+data_dir <- "../experiments/late_materialization/"
+
+runtime_results <- read.csv(paste0(data_dir, "runtime_results.csv"))
+runtime_results$materialization_type <- as.factor(ifelse(runtime_results$late_materialization, "Late", "Early"))
+runtime_results$columns <- factor(factor(runtime_results$columns), levels=c("int", "vec", "img"))
+
+io_results <- read.csv(paste0(data_dir, "io_results.csv"))
+io_results$materialization_type <- as.factor(ifelse(io_results$late_materialization, "Late", "Early"))
+io_results$columns <- factor(factor(io_results$columns), levels=c("int", "vec", "img"))
+```
+
+In @fig-late-mat-runtime, we compare the time to scan the dataset with filters of varying selectivity for Parquet and Lance. For Lance, we show early and late materialization to show the impact of late materialization. 
+
+At this row group size, Lance performance the scan faster than the two Parquet implementations, even for the small `int` column. In the early materialization case, Lance is reading roughly the same or more bytes from disk as the Parquet scans, as shown in @fig-late-mat-total-bytes. Despite this, Lance is able to read the image column with 4.5x less latency than Parquet (@fig-late-mat-table). One possible explanation for this difference is Lance's encodings require less decoding than Parquet to read into Arrow format. In fact, beyond some concatenation of buffers, Lance requires no transformation of binary column.
+
+In cases where the projection contains a large column and is relatively selection, Lance is even faster. For the `img` column with 12.1% selectivity, Lance scanned 21 times faster than DataFusion. A significant portion of this difference comes from the amount of data read from disk: during the scan, Lance reads 70% less data than DataFusion does. This difference is enabled by Lance's ability to pushdown slicing at the IO level, reading only the relevant parts of the pages from disk. Meanwhile DataFusion can only slice Parquet at the row group boundaries. (It's possible a future implementation of Parquet could slice at the page boundaries.) This pattern is clearly shown in @fig-late-mat-total-bytes, where the bytes read from disk by Lance smoothly scales with the number of rows selected by the filter, while DataFusion's jump each time a row group boundary is crossed.
+
+Because the filter being used selects a contiguous range of rows, DataFusion will only ever have one partial read of a group, limiting the read amplification to no more than 400MB in the case of the `img` column. However, if the filter results is more broken up, the read amplification will be stronger.
+
+```{r}
+#| label: fig-late-mat-runtime
+#| fig-cap: Scan time for early versus late materialization.
+#| fig-height: 3.5
+#| fig-width: 5
+ggplot(runtime_results, aes(color=library, linetype=materialization_type, x=selectivity, y=runtime)) +
+ geom_line() +
+ facet_wrap(~ columns, scales = "free_y", labeller = "label_both") +
+ scale_x_continuous(label=scales::label_percent()) +
+ theme(legend.position = "bottom") +
+ labs(
+  linetype="Materialization type",
+  x="Filter selectivity",
+  y="Runtime (s)",
+  color="Format",
+ )
+```
+
+
+
+```{r}
+#| label: fig-late-mat-table
+#| fig-cap: Read performance for `img` column.
+chosen_selectivity <- sort(unique(runtime_results$selectivity))[1]
+
+low_selectivity_results <- runtime_results |>
+    filter(selectivity == chosen_selectivity & columns == "img") |>
+    left_join(io_results, by=c("library", "columns", "materialization_type", "selectivity")) |>
+    select(library, materialization_type, runtime, total_bytes)
+
+lance_baseline <- low_selectivity_results |> filter(library == "Lance") |>
+    rename(runtime_lance = runtime, total_bytes_lance = total_bytes) |>
+    select(materialization_type, runtime_lance, total_bytes_lance)
+
+low_selectivity_results |>
+    left_join(lance_baseline, by=c("materialization_type"))  |>
+    mutate(
+        runtime_ratio = runtime / runtime_lance,
+        total_bytes_ratio = total_bytes / total_bytes_lance,
+        total_bytes = total_bytes / 1024 / 1024,
+        materialization_type = paste(materialization_type, "Materialization")
+    ) |>
+    select(materialization_type, library, runtime, runtime_ratio, total_bytes, total_bytes_ratio) |>
+    group_by(materialization_type) |>
+    gt(rowname_col="library") |>
+    fmt_number(runtime) |>
+    fmt_number(columns = c("runtime_ratio", "total_bytes_ratio"), decimals=1, pattern="{x}x") |>
+    fmt_number(total_bytes, decimals=0) |>
+    cols_label(
+        ends_with("ratio") ~ "",
+        runtime = "Latency (s)",
+        total_bytes = "Bytes Read (MB)",
+    ) #|>
+    # tab_header(
+    #     title = sprintf("Read performance for img column at %.01f%% selectivity", chosen_selectivity * 100)
+    # )
+```
+
+
+In @fig-late-mat-total-bytes, we compare the total bytes read during the scans performed above. Both DataFusion and Lance are able to skip a substantial amount of IO, but Lance is able to smoothly scale while DataFusion jumps up each time it reaches a new row group boundary.
+
+<!-- TODO: add a case where the filter is more random -->
+
+```{r}
+#| label: fig-late-mat-total-bytes
+#| fig-cap: Bytes read for early versus late materialization.
+#| fig-height: 3.5
+#| fig-width: 5
+ggplot(io_results, aes(color=library, linetype=materialization_type, x=selectivity, y=total_bytes)) +
+ geom_line() +
+ facet_wrap(~ columns, scales = "free_y", labeller = "label_both") +
+ scale_y_continuous(label=scales::label_bytes(unit="MB")) +
+ scale_x_continuous(label=scales::label_percent()) +
+ theme(legend.position = "bottom") +
+ labs(
+  linetype="Materialization type",
+  x="Filter selectivity",
+  y="Total bytes read",
+  color="Library",
+ )
+```
+
+
+In @fig-late-mat-num-ios, we compare the total number of IO calls performed during the scans performed above.
+
+```{r}
+#| label: fig-late-mat-num-ios
+#| fig-cap: The total number of IO calls made while scanning a single column with filter.
+#| fig-height: 4
+ggplot(io_results, aes(color=library, linetype=materialization_type, x=selectivity, y=num_ios)) +
+ geom_line() +
+ facet_wrap(~ columns, scales = "free_y") +
+ scale_x_continuous(label=scales::label_percent()) +
+ theme(legend.position = "bottom")
+```
+
+
+This reduction of IO is important for three factors: (1) query latency, (2) cost, and (3) scalability. The reduction in query latency is shown directly in @fig-late-mat-runtime. The reduction in IOs has direct cost benefits in object storage systems like S3 that charge per request. A 40% reduction in requests translates directly into reduction in costs. Finally, reduced IO calls also means the throughput limits of the storage system aren't hit as soon, improving the ability to scale the system.
