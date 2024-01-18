@@ -41,6 +41,17 @@ The Lance table format is inspired by other modern table formats such as Delta L
 Iceberg.  Files, once written, are immutable.  This makes it possible to use popular
 cloud based object storage solutions which do not support modifying existing files.
 Coordination mechanisms are described which can be used to achieve ACID data transactions.
+Details of the table format are beyond the scope of this paper but the following is a
+brief overview of the key structures for holding data.
+
+Tables consist of fragments.  Each fragment has one or more data files and an optional
+deletion vector.  All data files have the same number of rows but different columns.
+This allows columns to be added to an existing table without a rewrite.  A row addressing
+scheme is needed to allow secondary index lookups.  A row address is a 64-bit identifier.
+The upper 32 bits define the fragment id and the lower 32 bits define the fragment offset.
+The row ids are not physically materialized.
+
+![Lance Table Format](../figures/lance_table.png)
 
 ## Apache Arrow Compatibility
 
@@ -69,6 +80,8 @@ column metadata (such as page locations) and statistics (i.e. zone maps).  After
 is an optional manifest block which contains the schema of the data.  Finally, there is a
 footer, which contains the file version, the position of the metadata block, and a magic number.
 
+![Lance File Structure](../figures/lance_v1_file.png)
+
 ### Row Groups
 
 Data files are partitioned into row groups.  The reason for doing this is to limit the amount
@@ -91,12 +104,12 @@ storage systems such as S3.
 ### Column Encodings
 
 Column data is written into a row group, in DFS order.  Lance limits encodings to those
-that support sub-linear random access and does not do any compression.  Compression and
-bit packing encodings require storing multiple values in chunks or pages.  Reading one
-value from a chunk requires reading the entire page.  When working with very large values
-like those present in AI workloads this either leads to pages with only one or a few
-values (which defeats the purpose) or leads to large pages that are expensive to read
-from disk.  As a result, Lance currently only supports the following encodings.
+that support sub-linear random access which rules out generalized compression.  As a
+result, Lance currently only supports a few simple encodings.  Other columnar formats
+will divide column data into contiguous pages or compression chunks.  Since the currently
+supported encodings do not benefit from this there is no similar concept in Lance.  Each
+column can be thought of as a single page of data and we use the terms "column" and "page"
+interchangeably. 
 
 #### Plain Encoding
 
@@ -119,7 +132,7 @@ indices are written separately.  The indices are written with plain encoding.
 ### Page Table
 
 After all of the row groups are written the Lance file then contains the metadata.
-The first part of the metadat is the page table.  This table contains the file offset
+The first part of the metadata is the page table.  This table contains the file offset
 and byte length of each column in each row group.  This structure must be read before
 any random access can occur.  It is expected that this table will be cached (in memory
 or fast ephemeral storage) in most use cases.
