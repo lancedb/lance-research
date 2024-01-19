@@ -1,26 +1,37 @@
  The open-source file formats have been widely adopted and proliferated for the past 10 years. 
- Apache Haddop first introduced two row-oriented formats, SequenceFile[@] and Avro[@]. Then Meta 
- released a column-oriented format for Hadoop called RCFile[@]. Shortly after that, Meta refined 
- RCFile to ORC (Optimized Record Columnar File) format [@]. Twitter and Cloudera andannounced
- the first version of parguet [@] 1 month after that. Ever since then, column-oriented file 
- formats become dominant in the big data ecosystems and they are supported by most data processing 
- platforms.
+ Apache Haddop first introduced two row-oriented formats, SequenceFile[@sequencefile] and Avro[@avro], which 
+ were adopted by Haddop ecosystems. Then Meta released a column-oriented format for Hadoop called RCFile[@rcfile-2011]. 
+ Shortly after that, Meta refined RCFile to ORC (Optimized Record Columnar File) format [@orc-2014]. 
+ Twitter and Cloudera andannounced the first version of parguet [@parquet] 1 month after that. 
+ Ever since then, column-oriented file formats become dominant in the big data ecosystems, 
+ and they are supported by most data processing platforms.
 
- Columnar file formats have been under active research and devlopment in recent years. Specifically 
- with the purpose to better serve a specific group of applications, such as computer vision, scientific 
- computations. There are scientific data storage formats for HPC workloads, including HDF5[@],BP5[@],
- NetCDF[@],and Zarr[@].They target heterogeneous data that has complex file structures,types, and 
- organizations.Their data is typically multi-dimensional arrays and not support column-wise encoding.
+ Columnar file formats such as Parquet and ORC present the advantages of efficient data storage and retrieval,
+ making them the great candidate for sotring big data of any kind. 
+ Their efficient data compression and encoding schemes greatly save storage space. The data throughput and 
+ performance of queries based on such formats is orders of magnitude better, compared to row-oriented formats[@]
+ giving techniques such as data skipping and filtering. Parquet has rich APIs and can easily work with popular 
+ cloud services hosted by AWS, GCP and Azure. Zheng {/it et al.} conducted a comprehensive performance study 
+ over columnar file formats [@zeng2023empirical].
+
+ Although Parquet and ORC have the polularity with big data systems, with the fast advancement of AI applications in 
+ recent years, they are not suitable due to the fact that AI applications usually require large columns 
+ (e.g. embedded vectors, images, sensor data) for storage. Furthermore, such applications require search where performant 
+ scanning and random row access is essential. This calls for a new format with the combined benefits
+ from row-oriented and column-oriented file formats. Petastorm[@petastorm] library enables parquet usage of Tensorflow, PyTorch 
+ and other ML frameworks. Research has been active in the area of 
+ improving indexing[@col-sketch-2018, @col-imprints-2013, @bitweaving-2013], 
+ data compression[@compression-2006, @compression-2019] and more efficient query execution by taking advantage of 
+ hardware improvement such as GPU[@simd-2020, @scan-2017, @rethink-2015]. Systems like Artus[@] and BtrBlocks[@] allows reading a single row without 
+ decoding a full page, as well as generic compression to accelerate performance. There is still a need to 
+ have a new file format which can combine the advancement from all such research efforts. Furthermore,
+ it can provide rich APIs and integrate easily with ML frameworks.
 
  Arrow represents the in-memory colmnar format designed for efficient exchange of data with limited 
- serialization between different application processs. Arrow can support random access thus it is a
- good candidate for long-term disk storage.
-
- Recent data storage solutions for AI tend to combine the data lake with data warehouse, such as the Delta
- Lake [@], Apache Iceberg[@] and Apache Hudi[@]. This requires a data format that not only can provide
- benefits such as efficient storage, performant access, but also can combine the metadata management.
-
- Another group of research goes into learning the column layouts given the workload knowledge and performance
- requirements[@Manos]. With a combination of OLAP and serving workloads[@procella2019], along with the underlying hardware, 
- making a priori decision of the dataset layout is suboptimal.  Tuning knobs such as how to physically order
- data, column density level and buffer space allocation for updates, can be decided for specific workloads.
+ serialization between different application processs. Arrow can support random access and does not 
+ require block-based decoding on reads. This layout a solid foundation for data format that can support
+ embedded database. Another group of research goes into learning the column layouts given the workload 
+ knowledge and performance requirements[@col-layout-2019], which decides the optimal dataset layout 
+ based on the specific workload, e.g. how to physically order data, column density level and buffer 
+ space allocation for updates. Google presented Procella [@procella2019] to combine data lake and data 
+ analytics system, which poses the challenge of metadata management. 
