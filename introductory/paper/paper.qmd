@@ -138,15 +138,13 @@ abstract: |
 
 # Future work
 
-In this paper, we demonstrated Lance's optimizations for vector and large binary data. We compared this to existing data lake formats, such as Parquet. Future improvements are needed to the Lance format, both to match the existing capabilities of Parquet and similar formats, as well as support additional AI use cases.
+Lance's primary optimization is sliceable data pages. For non-nullable plain-encoded data, this is straightfoward and performs well. However, future work is needed to determine how this optimization can be effectively applied to other encodings. For example, to support nullability, a null bitmap buffer could be added to a data page adjacent to the values buffer. To read single row for a plain-encoded array, the system will need to choose between making two small IOPs (one for the value, one for the null bit) and making a single larger IOP that covers both byte ranges. It's possible that more creative layouts and clever IO coalescing mechanisms can provide more optimal IO paths. Such work will likely need to balance minimizing total bytes read and total IOPS, possibly considering the characteristics of the storage system. For example, NVMe drives may have very low IOP overhead as well as a small minimum request size, while cloud object stores like AWS S3 have much higher per request overhead and higher minimum request size. Such may build upon the work done in @btrblocks.
 
-First, Lance currently does not support null values in most data types. We will be implementing this, while attempting to maintain the sliceability of buffers to the extent possible.
-
-To be useful in a broader set of use cases, Lance will need additional encoding schemes. While plain encodings works well for vector embeddings and compressed binary blobs, other data types will require encodings that provide compression, as seen in other state-of-the-art storage systems. Like Artus (@procella2019), Lance will prefer encodings that support single-value and range access, and avoid those that require decoding full pages. In additional, we may also implement novel encodings to handle other AI data types, such as sparse tensors.
+Currently, Lance format lacks support for nullability and compression. Once the sliceable data pages optimizations are applied to a wider set of encodings, Lance will likely perform as well or better than most existing columnar formats.
 
 As noted earlier, Lance does not support varying the number of rows per a page by column. This can be sub-optimal when some columns are small (such as a float32 column) while others are very large (such as a 1MB image column). A the default of 1024 rows, the page of floats will exceedingly small, even without compression. Meanwhile the image column would be near the upper limit of what an application would want to buffer in memory before flushing a row group to disk. Therefore, in the future we may allow varing page sizes by column type.
 
-In addition to improving the file format, additional improvements are needed in the table format. The current state and areas of improvement will be discussed in a future paper.
+Finally, this paper describes the file format, but not the Lance table format. The Lance table format adds features known to existing table formats, such as ACID guarantees over cloud object store. Additionally, it supports secondary indices, which are made practical by Lance's fast random access. These secondary indices are written in immutable files similar to the data files of a table format. Future research may examine how to keep secondary indices up-to-date while balancing read latency and write amplification.
 
 # Conclusion
 
