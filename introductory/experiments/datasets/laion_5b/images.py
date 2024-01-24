@@ -52,8 +52,8 @@ class ImageProcessor:
         print("Downloading images")
         download(
             # distributor="multiprocessing",
-            # processes_count=16,
-            # thread_count=32,
+            processes_count=8,
+            thread_count=128,
             retries=1,
             # Transform params
             resize_only_if_bigger=True,
