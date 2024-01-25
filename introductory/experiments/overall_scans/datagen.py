@@ -159,4 +159,4 @@ if __name__ == "__main__":
         TPCHGenerator().generate("data/tpch", [1024, 100 * 1024])
 
     if args.dataset == "laion" or args.dataset is None:
-        LAIONGenerator().generate("data/laion", [1024, 100 * 1024])
+        LAIONGenerator().generate("data/laion", [1024])
