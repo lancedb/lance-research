@@ -110,7 +110,10 @@ class LAIONGenerator(DatasetGenerator):
         )
         with time_log():
             pq_data = ds.dataset(self.data_path, format="parquet")
-            reader = pq_data.scanner().to_reader()
+            reader = pq_data.scanner(
+                batch_readahead=1,
+                fragment_readahead=1,
+            ).to_reader()
             ds.write_dataset(
                 reader, path, format="parquet", max_rows_per_group=row_group_size
             )
@@ -125,7 +128,10 @@ class LAIONGenerator(DatasetGenerator):
             # Need to transform 'element' name to 'item'
             lance_ds = lance.write_dataset([], path, schema=pq_data.schema)
             schema = lance_ds.schema
-            reader = pq_data.scanner().to_reader()
+            reader = pq_data.scanner(
+                batch_readahead=1,
+                fragment_readahead=1,
+            ).to_reader()
 
             def scan():
                 for batch in reader:
@@ -153,4 +159,4 @@ if __name__ == "__main__":
         TPCHGenerator().generate("data/tpch", [1024, 100 * 1024])
 
     if args.dataset == "laion" or args.dataset is None:
-        LAIONGenerator().generate("data/laion", [1024, 100 * 1024])
+        LAIONGenerator().generate("data/laion", [1024])

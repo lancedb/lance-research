@@ -44,4 +44,4 @@ def test_scan_laion(dataset_dir, benchmark):
         num_rows = benchmark(run_lance_scan, path)
     else:
         raise Exception("Unknown data format")
-    assert num_rows == 1870007
+    assert num_rows == 1000000

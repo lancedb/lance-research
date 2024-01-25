@@ -265,7 +265,9 @@ data$dataset <- ifelse(data$dataset == "laion", "Laion", "TPC-H lineitem")
 #| label: fig-dataset-size
 #| fig-cap: Size of datasets used in scan benchmarks
 data |>
-    filter(row_group_size == 102400) |>
+    # Show the most appropriate row group size for each dataset.
+    filter((row_group_size == 102400 & dataset == "TPC-H lineitem") |
+           (row_group_size == 1024 & dataset == "Laion")) |>
     select(dataset, format, dataset_size_bytes) |>
     mutate(dataset_size_bytes = dataset_size_bytes / 1024 / 1024 / 1024) |>
     pivot_wider(names_from = format, values_from = dataset_size_bytes) |>
@@ -295,6 +297,6 @@ ggplot(data, aes(x = format, y = scan_time)) +
     facet_grid(dataset ~ row_group_size, labeller = "label_both") +
     labs(
       x="Format",
-      y="Runtime (s)",
+      y="Runtime (s)"
      )
 ```
