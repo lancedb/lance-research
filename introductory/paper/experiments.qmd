@@ -80,6 +80,6 @@ ggplot(data, aes(x = format, y = rows_per_sec)) +
     facet_grid(dataset ~ row_group_size, labeller = "label_both", scales = "free_y") +
     labs(
       x="Format",
-      y="Rows scanner per second",
+      y="Rows scanned per second",
      )
 ```
