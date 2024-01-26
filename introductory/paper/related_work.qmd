@@ -16,7 +16,7 @@
 
  Although Parquet and ORC have the polularity with big data systems, with the fast advancement of AI applications in 
  recent years, they are not suitable due to the fact that AI applications usually require large columns 
- (e.g. embedded vectors, images, sensor data) for storage. Furthermore, such applications require search where performant 
+ (e.g. embedded vectors, images, sensor data) for storage. For example, the LAION-5B dataset [@laion-5b] is distributed as a set of Parquet files for metadata columns paired with NumPy binary files for the vector embeddings. Furthermore, such applications require search where performant 
  scanning and random row access is essential. This calls for a new format with the combined benefits
  from row-oriented and column-oriented file formats. Petastorm[@petastorm] library enables parquet usage of Tensorflow, PyTorch 
  and other ML frameworks. Research has been active in the area of 
