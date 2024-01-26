@@ -22,7 +22,7 @@
  and other ML frameworks. Research has been active in the area of 
  improving indexing[@col-sketch-2018, @col-imprints-2013, @bitweaving-2013], 
  data compression[@compression-2006, @compression-2019] and more efficient query execution by taking advantage of 
- hardware improvement such as GPU[@simd-2020, @scan-2017, @rethink-2015]. Systems like Artus[@] and BtrBlocks[@] allows reading a single row without 
+ hardware improvement such as GPU[@simd-2020, @scan-2017, @rethink-2015]. Systems like Artus[@procella2019] and BtrBlocks[@btrblocks] allows reading a single row without 
  decoding a full page, as well as generic compression to accelerate performance. There is still a need to 
  have a new file format which can combine the advancement from all such research efforts. Furthermore,
  it can provide rich APIs and integrate easily with ML frameworks.
