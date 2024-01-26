@@ -8,9 +8,9 @@
 
  Columnar file formats such as Parquet and ORC present the advantages of efficient data storage and retrieval,
  making them the great candidate for sotring big data of any kind. 
- Their efficient data compression and encoding schemes greatly save storage space. The data throughput and 
- performance of queries based on such formats is orders of magnitude better, compared to row-oriented formats[@]
- giving techniques such as data skipping and filtering. Parquet has rich APIs and can easily work with popular 
+ The data throughput and 
+ performance of queries based on such formats is orders of magnitude better, compared to row-oriented formats[@column-vs-rows]
+ given techniques such as columnar compression, late materialization, and SIMD-friendly layout. Parquet has rich APIs and can easily work with popular 
  cloud services hosted by AWS, GCP and Azure. Zheng {/it et al.} conducted a comprehensive performance study 
  over columnar file formats [@zeng2023empirical].
 
