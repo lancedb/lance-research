@@ -2,3 +2,6 @@
 *.log
 .DS_Store
 *.fdb_latexmk
+
+.RData
+.Rhistory
