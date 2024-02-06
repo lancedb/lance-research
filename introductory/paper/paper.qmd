@@ -119,12 +119,7 @@ include-in-header:
   - table_workaround.tex
 
 abstract: |
-  A clear and well-documented \LaTeX\ document is presented as an
-  article formatted for publication by ACM in a conference proceedings
-  or journal publication. Based on the "acmart" document class, this
-  article presents and explains many of the common variations, as well
-  as many of the formatting elements an author may use in the
-  preparation of the documentation of their work.
+  We introduce a new file format called Lance, designed for AI use cases. It supports both high-throughput scanning and low-latency random reads. It performs these operations much faster than existing columnar formats for vector embedding columns and large binary columns with unstructured data (such as images or text documents). A key optimization is allowing reading partial pages, rather than requiring loading full data pages even to read a single row value.
 
 ---
 
@@ -149,6 +144,7 @@ Finally, this paper describes the file format, but not the Lance table format. T
 
 # Conclusion
 
+In conclusion, we have introduced Lance, a new file format designed for AI use cases. Lance offers significant performance improvements for high-throughput scanning and low-latency random reads compared to existing columnar formats. The key optimization of sliceable data pages allows for faster operations and efficient handling of vector embedding columns and large binary columns with unstructured data. While Lance currently lacks support for nullability and compression, future work can address these limitations and further optimize the format. Additionally, the Lance table format extends the capabilities of Lance by providing ACID guarantees over cloud object storage and supporting secondary indices. Overall, Lance presents a promising solution for AI applications that require efficient data storage and retrieval.
 
 # References {-}
 
