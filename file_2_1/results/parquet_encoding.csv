@@ -1,0 +1,4 @@
+compression,dictionary,takes_per_second
+False,False,375103.57721644954
+True,False,330657.83907846594
+False,True,8160.241065263112

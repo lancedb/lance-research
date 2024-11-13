@@ -1,5 +1,0 @@
-use_cache,format,row_group_size,take_size,column,latency,io_size,iops
-True,parquet,100000,64,double,34.637735532,0,0
-True,parquet,100000,64,vector,197.325609397,0,0
-True,lance,100000,64,double,2.0671308760000002,0,0
-True,lance,100000,64,vector,2.7374183910000003,0,0

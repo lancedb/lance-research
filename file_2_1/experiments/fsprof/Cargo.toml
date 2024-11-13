@@ -1,0 +1,26 @@
+[package]
+name = "fsprof"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytes = "1.9.0"
+futures = "0.3.31"
+indicatif = "0.17.9"
+libc = "0.2.169"
+object_store = { version = "0.11.1", features = ["aws"] }
+rand = "0.8.5"
+tokio = { version = "1.42.0", features = [
+    "rt",
+    "macros",
+    "rt-multi-thread",
+    "fs",
+] }
+
+[[bin]]
+name = "local"
+path = "src/local.rs"
+
+[[bin]]
+name = "s3"
+path = "src/s3.rs"
