@@ -6,6 +6,7 @@ import numpy as np
 import os
 import pyarrow as pa
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor
 
 # 32M rows * 32 values per row ~ 1GB
 NUM_ROWS = 32_000_000
@@ -15,6 +16,7 @@ DATASET_PATH_BASE = "/tmp/random_depth"
 DURATION_S = 10
 TAKE_SIZE = 100
 DISK_NAME = "nvme0n1"
+NUM_THREADS = 8
 
 
 def tablegen(batch_size: int):
@@ -139,39 +141,37 @@ def run_experiment(dataset: lance.LanceDataset):
     for col in ds.schema.names:
         drop_caches()
         start = time.time()
-        offset = 0
-        rows_read = 0
-        pbar = tqdm(total=DURATION_S)
-        elapsed = 0
-        starting_read_count = get_disk_read_count()
-        while elapsed < DURATION_S:
-            batch_indices = indices[offset : offset + TAKE_SIZE]
-            batch = dataset.take(batch_indices, columns=[col])
-            offset += TAKE_SIZE
-            if offset + TAKE_SIZE >= NUM_ROWS:
-                offset = 0
-            rows_read += batch.num_rows
-            elapsed = min(DURATION_S, time.time() - start)
-            pbar.update(elapsed - pbar.n)
-        pbar.close()
-        ending_read_count = get_disk_read_count()
-        num_reads = ending_read_count - starting_read_count
-        print(f"Column {col} read {rows_read} rows using {num_reads} reads")
-        counts.append(rows_read)
+        with ThreadPoolExecutor() as executor:
+
+            def thread_task(thread_index):
+                offset = 0 * NUM_ROWS // NUM_THREADS
+                rows_read = 0
+                elapsed = 0
+                while elapsed < DURATION_S:
+                    batch_indices = indices[offset : offset + TAKE_SIZE]
+                    batch = dataset.take(batch_indices, columns=[col])
+                    offset += TAKE_SIZE
+                    if offset + TAKE_SIZE >= NUM_ROWS:
+                        offset = 0
+                    rows_read += batch.num_rows
+                    elapsed = min(DURATION_S, time.time() - start)
+                return rows_read
+
+            starting_read_count = get_disk_read_count()
+            futures = [
+                executor.submit(thread_task, thread_index)
+                for thread_index in range(NUM_THREADS)
+            ]
+            rows_read = sum([f.result() for f in futures])
+            ending_read_count = get_disk_read_count()
+            num_reads = ending_read_count - starting_read_count
+            print(f"Column {col} read {rows_read} rows using {num_reads} reads")
+            counts.append(rows_read)
     print(counts)
 
 
 if __name__ == "__main__":
     ds = datagen("2.0")
-    # print(ds.schema)
-    # ds.take([5000], columns=["values4"])
-    # drop_caches()
-    # num_reads = get_disk_read_count()
-    # ds.take(
-    #     [100000, 200000, 300000, 400000, 500000, 600000, 700000], columns=["values4"]
-    # )
-    # print(f"Reads: {get_disk_read_count() - num_reads}")
-
     run_experiment(ds)
-    ds = datagen("2.1")
-    run_experiment(ds)
+    # ds = datagen("2.1")
+    # run_experiment(ds)
