@@ -1,4 +1,5 @@
 import shutil
+import sys
 import time
 
 import lance
@@ -9,7 +10,7 @@ from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 
 # 32M rows * 32 values per row ~ 1GB
-NUM_ROWS = 32_000_000
+NUM_ROWS = 16_000_000
 ROWS_PER_FILE = 1_000_000
 NUM_FILES = NUM_ROWS // ROWS_PER_FILE
 DATASET_PATH_BASE = "/tmp/random_depth"
@@ -20,24 +21,24 @@ NUM_THREADS = 8
 
 
 def tablegen(batch_size: int):
-    items = np.random.rand(32 * batch_size)
+    items = np.random.rand(16 * batch_size)
     items = pa.array(items, pa.float64())
-    nulls = np.random.choice([True, False], 32 * batch_size, p=[0.9, 0.1])
+    nulls = np.random.choice([True, False], 16 * batch_size, p=[0.9, 0.1])
     nulls = pa.array(nulls, pa.bool_())
 
     values = pa.Array.from_buffers(
-        pa.list_(items.type, 32),
+        pa.list_(items.type, 16),
         batch_size,
         [nulls.buffers()[1]],
         children=[items],
     )
     values2 = pa.Array.from_buffers(
-        pa.list_(pa.list_(items.type, 16), 2),
+        pa.list_(pa.list_(items.type, 8), 2),
         batch_size,
         [nulls.buffers()[1]],
         children=[
             pa.Array.from_buffers(
-                pa.list_(items.type, 16),
+                pa.list_(items.type, 8),
                 batch_size * 2,
                 [nulls.buffers()[1]],
                 children=[items],
@@ -45,17 +46,17 @@ def tablegen(batch_size: int):
         ],
     )
     values3 = pa.Array.from_buffers(
-        pa.list_(pa.list_(pa.list_(items.type, 8), 2), 2),
+        pa.list_(pa.list_(pa.list_(items.type, 4), 2), 2),
         batch_size,
         [nulls.buffers()[1]],
         children=[
             pa.Array.from_buffers(
-                pa.list_(pa.list_(items.type, 8), 2),
+                pa.list_(pa.list_(items.type, 4), 2),
                 batch_size * 2,
                 [nulls.buffers()[1]],
                 children=[
                     pa.Array.from_buffers(
-                        pa.list_(items.type, 8),
+                        pa.list_(items.type, 4),
                         batch_size * 4,
                         [nulls.buffers()[1]],
                         children=[items],
@@ -65,22 +66,22 @@ def tablegen(batch_size: int):
         ],
     )
     values4 = pa.Array.from_buffers(
-        pa.list_(pa.list_(pa.list_(pa.list_(items.type, 4), 2), 2), 2),
+        pa.list_(pa.list_(pa.list_(pa.list_(items.type, 2), 2), 2), 2),
         batch_size,
         [nulls.buffers()[1]],
         children=[
             pa.Array.from_buffers(
-                pa.list_(pa.list_(pa.list_(items.type, 4), 2), 2),
+                pa.list_(pa.list_(pa.list_(items.type, 2), 2), 2),
                 batch_size * 2,
                 [nulls.buffers()[1]],
                 children=[
                     pa.Array.from_buffers(
-                        pa.list_(pa.list_(items.type, 4), 2),
+                        pa.list_(pa.list_(items.type, 2), 2),
                         batch_size * 4,
                         [nulls.buffers()[1]],
                         children=[
                             pa.Array.from_buffers(
-                                pa.list_(items.type, 4),
+                                pa.list_(items.type, 2),
                                 batch_size * 8,
                                 [nulls.buffers()[1]],
                                 children=[items],
@@ -171,7 +172,11 @@ def run_experiment(dataset: lance.LanceDataset):
 
 
 if __name__ == "__main__":
-    ds = datagen("2.0")
+    if len(sys.argv) < 2:
+        print("Usage: python experiment.py <file_version>")
+        sys.exit(1)
+
+    file_version = sys.argv[1]
+
+    ds = datagen(file_version)
     run_experiment(ds)
-    # ds = datagen("2.1")
-    # run_experiment(ds)
