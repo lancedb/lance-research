@@ -43,7 +43,7 @@ for ps_idx, page_size in enumerate(page_sizes):
             label="Takes/s",
         )
 
-plt.subplots_adjust(hspace=0.6)
+plt.subplots_adjust(hspace=0.4, wspace=0.0)
 plt.suptitle("Parquet Random Access")
 plt.savefig("chart.png", bbox_inches="tight")
 plt.close()
