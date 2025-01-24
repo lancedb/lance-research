@@ -1,18 +1,19 @@
 //! Implementation of the "take" operation for Parquet
 
-use parquet::{
-    arrow::{
-        arrow_reader::{
-            ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder, RowSelection,
-            RowSelector,
-        },
-        ProjectionMask,
+use parquet::arrow::{
+    arrow_reader::{
+        ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder, RowSelection,
+        RowSelector,
     },
-    file::reader::ChunkReader,
+    ProjectionMask,
 };
-use std::{fs::File, iter, sync::Arc};
+use std::{
+    fs::File,
+    iter,
+    sync::{atomic::Ordering, Arc},
+};
 
-use crate::threading::TaskPool;
+use crate::{parq::io::FileLike, threading::TaskPool, TAKE_COUNTER};
 
 /// An iterator of that starts with a list of file offsets and generates RowSelectors
 struct IndicesToRowSelection<'a, I: Iterator<Item = &'a u32>> {
@@ -55,7 +56,7 @@ impl<'a, I: Iterator<Item = &'a u32>> Iterator for IndicesToRowSelection<'a, I> 
 }
 
 /// Create a task that performs a take operation on single row group's worth of data
-pub fn take_task<T: ChunkReader + 'static>(
+pub fn take_task<T: FileLike>(
     file: T,
     metadata: ArrowReaderMetadata,
     row_group_number: u32,
@@ -108,6 +109,7 @@ pub fn take_task<T: ChunkReader + 'static>(
     };
     let rows_taken = batch.iter().map(|batch| batch.num_rows()).sum::<usize>();
     assert_eq!(rows_taken, row_indices.len());
+    TAKE_COUNTER.fetch_add(rows_taken, Ordering::Release);
 }
 
 pub trait TryClone {
@@ -125,7 +127,7 @@ impl TryClone for File {
     }
 }
 
-fn take_with_metadata<T: ChunkReader + TryClone + 'static>(
+fn take_with_metadata<T: FileLike>(
     file: T,
     row_indices: Vec<u32>, // Note: this is sorted
     column_index: u32,
@@ -180,7 +182,7 @@ fn take_with_metadata<T: ChunkReader + TryClone + 'static>(
     }
 }
 
-pub fn take<T: ChunkReader + TryClone + 'static>(
+pub fn take<T: FileLike>(
     file: T,
     row_indices: Vec<u32>,
     column_index: u32,
@@ -214,7 +216,7 @@ pub fn take<T: ChunkReader + TryClone + 'static>(
     }
 }
 
-pub fn scan_task<T: ChunkReader + TryClone + 'static>(
+pub fn scan_task<T: FileLike>(
     file: T,
     column_indices: &[u32],
     row_group_number: u32,
@@ -238,7 +240,7 @@ pub fn scan_task<T: ChunkReader + TryClone + 'static>(
     num_rows
 }
 
-pub fn scan<T: ChunkReader + TryClone + 'static>(
+pub fn scan<T: FileLike>(
     file: T,
     column_indices: &[u32],
     metadata: Option<ArrowReaderMetadata>,
@@ -270,7 +272,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        parq::{io::WorkDir, make_parquet_file, work_file_path},
+        parq::{io::WorkDir, make_parquet_file, parq_file_path},
         threading::TaskPool,
         DataTypeChoice,
     };
@@ -281,7 +283,7 @@ mod tests {
     const MOCK_PAGE_SIZE_KB: usize = 1024;
     const MOCK_CHUNK_SIZE: usize = 100;
     const MOCK_CHUNK_INDEX: usize = 0;
-    const MOCK_DATA_TYPE: DataTypeChoice = DataTypeChoice::Long;
+    const MOCK_DATA_TYPE: DataTypeChoice = DataTypeChoice::Scalar;
 
     async fn setup_test_file(work_dir: &WorkDir) {
         make_parquet_file(
@@ -298,16 +300,18 @@ mod tests {
     #[tokio::test]
     async fn test_take_selection() {
         let tempdir = tempfile::tempdir().unwrap();
-        let work_dir = WorkDir::new(format!("file://{}", tempdir.path().display()).as_str());
+        let work_dir = WorkDir::new(format!("file://{}", tempdir.path().display()).as_str()).await;
         setup_test_file(&work_dir).await;
-        let file = work_dir.local_file(work_file_path(
+        let file = work_dir.local_file(parq_file_path(
             &work_dir,
             MOCK_ROW_GROUP_SIZE,
             MOCK_PAGE_SIZE_KB,
             MOCK_CHUNK_INDEX,
             MOCK_DATA_TYPE,
         ));
-        let task_pool = Arc::new(TaskPool::new());
+        let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().build().unwrap());
+
+        let task_pool = Arc::new(TaskPool::new(rt));
         take(file, vec![1], 0, true, None, task_pool.clone());
         task_pool.join();
     }
@@ -315,16 +319,18 @@ mod tests {
     #[tokio::test]
     async fn test_take_no_selection() {
         let tempdir = tempfile::tempdir().unwrap();
-        let work_dir = WorkDir::new(format!("file://{}", tempdir.path().display()).as_str());
+        let work_dir = WorkDir::new(format!("file://{}", tempdir.path().display()).as_str()).await;
         setup_test_file(&work_dir).await;
-        let file = work_dir.local_file(work_file_path(
+        let file = work_dir.local_file(parq_file_path(
             &work_dir,
             MOCK_ROW_GROUP_SIZE,
             MOCK_PAGE_SIZE_KB,
             MOCK_CHUNK_INDEX,
             MOCK_DATA_TYPE,
         ));
-        let task_pool = Arc::new(TaskPool::new());
+        let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().build().unwrap());
+
+        let task_pool = Arc::new(TaskPool::new(rt));
         take(file, vec![1], 0, false, None, task_pool.clone());
         task_pool.join();
     }

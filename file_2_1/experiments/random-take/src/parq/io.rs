@@ -16,7 +16,11 @@ use crate::sync::RT;
 use crate::take::TryClone;
 use crate::{log, LOG_READS};
 
+/// Marker trait for types that can be used as a file-like object
+pub trait FileLike: ChunkReader + TryClone + std::fmt::Debug + 'static {}
+
 /// Wraps an ObjectStore and a Path to provide a ChunkReader implementation
+#[derive(Debug)]
 pub struct ObjectStoreFile {
     object_store: Arc<dyn ObjectStore>,
     location: Path,
@@ -79,6 +83,8 @@ impl TryClone for ObjectStoreFile {
     }
 }
 
+impl FileLike for ObjectStoreFile {}
+
 pub struct ReadAtReader {
     target: File,
     cursor: u64,
@@ -86,6 +92,7 @@ pub struct ReadAtReader {
 
 impl Read for ReadAtReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let _span = tracing::info_span!("read").entered();
         let offset = self.cursor;
         let bytes_read = std::os::unix::fs::FileExt::read_at(&self.target, buf, offset)?;
         self.cursor += bytes_read as u64;
@@ -94,11 +101,16 @@ impl Read for ReadAtReader {
 }
 
 /// Wraps a local file and provides a ChunkReader impl using pread64
+#[derive(Debug)]
 pub struct ReadAtFile(File);
 
 impl ReadAtFile {
     pub fn new(file: File) -> Self {
         Self(file)
+    }
+
+    pub fn read_at(&self, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
+        std::os::unix::fs::FileExt::read_at(&self.0, buf, offset)
     }
 }
 
@@ -119,6 +131,7 @@ impl ChunkReader for ReadAtFile {
     }
 
     fn get_bytes(&self, start: u64, length: usize) -> parquet::errors::Result<bytes::Bytes> {
+        let _span = tracing::info_span!("get_bytes").entered();
         if LOG_READS.load(std::sync::atomic::Ordering::Acquire) {
             log(format!("Reading {} bytes", length));
         }
@@ -141,21 +154,29 @@ impl TryClone for ReadAtFile {
     }
 }
 
+impl FileLike for ReadAtFile {}
+
 /// A workdir that can be either a local filesystem or S3
 #[derive(Clone, Debug)]
 pub struct WorkDir {
+    lance_object_store: Arc<lance_io::object_store::ObjectStore>,
     object_store: Arc<dyn ObjectStore>,
     path: Path,
     is_s3: bool,
 }
 
 impl WorkDir {
-    pub fn new(workdir: &str) -> Self {
+    pub async fn new(workdir: &str) -> Self {
+        let (lance_object_store, _) = lance_io::object_store::ObjectStore::from_uri(workdir)
+            .await
+            .unwrap();
+        // TODO: could probably just use lance_object_store.inner here
         if workdir.starts_with("file://") {
             let path = Path::parse(workdir[7..].to_string()).unwrap();
             let object_store = Arc::new(LocalFileSystem::new()) as Arc<dyn ObjectStore>;
             log(format!("Using local filesystem at {}", path));
             Self {
+                lance_object_store: Arc::new(lance_object_store),
                 path,
                 object_store,
                 is_s3: false,
@@ -176,6 +197,7 @@ impl WorkDir {
                     path
                 ));
                 Self {
+                    lance_object_store: Arc::new(lance_object_store),
                     path,
                     object_store,
                     is_s3: true,
@@ -218,6 +240,22 @@ impl WorkDir {
 
     pub fn writer(&self, dest_path: Path) -> BufWriter {
         BufWriter::new(self.object_store.clone(), dest_path)
+    }
+
+    pub async fn lance_writer(&self, dest_path: Path) -> lance_io::object_writer::ObjectWriter {
+        self.lance_object_store.create(&dest_path).await.unwrap()
+    }
+
+    pub fn object_store(&self) -> Arc<dyn ObjectStore> {
+        self.object_store.clone()
+    }
+
+    pub async fn copy(&self, src_path: &Path, dest_path: &Path) {
+        self.object_store.copy(&src_path, &dest_path).await.unwrap();
+    }
+
+    pub fn lance_object_store(&self) -> Arc<lance_io::object_store::ObjectStore> {
+        self.lance_object_store.clone()
     }
 
     pub fn is_s3(&self) -> bool {

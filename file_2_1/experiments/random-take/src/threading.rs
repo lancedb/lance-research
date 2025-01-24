@@ -10,12 +10,14 @@ use std::sync::{Arc, Condvar, Mutex};
 /// performance improvement.
 pub struct TaskPool {
     task_counter: Arc<(Mutex<usize>, Condvar)>,
+    rt: Arc<tokio::runtime::Runtime>,
 }
 
 impl TaskPool {
-    pub fn new() -> Self {
+    pub fn new(rt: Arc<tokio::runtime::Runtime>) -> Self {
         Self {
             task_counter: Arc::new((Mutex::new(0), Condvar::new())),
+            rt,
         }
     }
 
@@ -25,7 +27,7 @@ impl TaskPool {
         drop(task_counter);
 
         let task_counter = self.task_counter.clone();
-        rayon::spawn(move || {
+        self.rt.spawn_blocking(move || {
             f();
             let mut task_counter_count = task_counter.0.lock().unwrap();
             *task_counter_count -= 1;

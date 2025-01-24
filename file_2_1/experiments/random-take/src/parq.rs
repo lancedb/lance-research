@@ -14,30 +14,19 @@ pub mod io;
 fn get_parquet_write_batch_size(page_size_kb: usize, data_type: DataTypeChoice) -> usize {
     let page_size = page_size_kb * 1024;
     let elem_size = match data_type {
-        DataTypeChoice::Int => 4,
-        DataTypeChoice::Long => 8,
-        DataTypeChoice::Float => 4,
-        DataTypeChoice::Double => 8,
-        DataTypeChoice::String => 20,
-        DataTypeChoice::Embedding => 3 * 1024,
-        DataTypeChoice::Image => 80 * 1024,
+        DataTypeChoice::Scalar => 8,
+        DataTypeChoice::String => 12,
+        DataTypeChoice::ScalarList => 12,
+        DataTypeChoice::StringList => 16,
+        DataTypeChoice::Vector => 3 * 1024,
+        DataTypeChoice::VectorList => 5 * 3 * 1024,
+        DataTypeChoice::Binary => 20 * 1024,
+        DataTypeChoice::BinaryList => 5 * 20 * 1024,
     };
     (page_size / elem_size).max(1) as usize
 }
 
-fn data_type_str(data_type: DataTypeChoice) -> &'static str {
-    match data_type {
-        DataTypeChoice::Int => "u32",
-        DataTypeChoice::Long => "u64",
-        DataTypeChoice::Float => "f32",
-        DataTypeChoice::Double => "f64",
-        DataTypeChoice::String => "string",
-        DataTypeChoice::Embedding => "embedding",
-        DataTypeChoice::Image => "image",
-    }
-}
-
-pub fn work_file_path(
+pub fn parq_file_path(
     work_dir: &WorkDir,
     row_group_size: usize,
     page_size_kb: usize,
@@ -48,7 +37,7 @@ pub fn work_file_path(
         "parquet_row_groups_{}_page_{}_kib_type_{}_chunk_{}.parquet",
         row_group_size,
         page_size_kb,
-        data_type_str(data_type),
+        data_type.as_str(),
         chunk_index,
     ))
 }
@@ -61,7 +50,7 @@ pub async fn make_parquet_file(
     data_type: DataTypeChoice,
     work_dir: &WorkDir,
 ) {
-    let dest_path = work_file_path(
+    let dest_path = parq_file_path(
         work_dir,
         row_group_size,
         page_size_kb,

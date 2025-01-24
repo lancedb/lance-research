@@ -4,11 +4,9 @@ import matplotlib.ticker
 
 plt.rc("axes", axisbelow=True)
 
-df = pd.read_csv("local.csv")
-# page_sizes = df["page_size_kb"].unique().tolist()
-page_sizes = [8, 64, 256]
-# take_sizes = df["take_size"].unique().tolist()
-take_sizes = [1, 16, 256]
+df = pd.read_csv("parquet_local.csv")
+page_sizes = df["page_size_kb"].unique().tolist()
+take_sizes = df["take_size"].unique().tolist()
 datatypes = df["column"].unique().tolist()
 
 num_page_sizes = len(page_sizes)
@@ -33,7 +31,7 @@ for ps_idx, page_size in enumerate(page_sizes):
             ax.set_title(f"page={page_size} KiB")
         ax.tick_params(axis="x", labelrotation=90)
 
-        ax.set_ylim([0, 500_000])
+        ax.set_ylim([0, 250_000])
 
         ax.yaxis.set_major_locator(matplotlib.ticker.LinearLocator(3))
 
