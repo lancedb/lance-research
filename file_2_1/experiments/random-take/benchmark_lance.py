@@ -39,7 +39,7 @@ def get_bench_args(column_type: str, take_size: int, version: str):
 
     if column_type == "vector":
         args.append("--num-files")
-        args.append("5")
+        args.append("10")
     elif column_type == "binary" or column_type == "vector-list":
         args.append("--num-files")
         args.append("2")

@@ -231,8 +231,6 @@ async fn lance_setup(
     work_dir: &WorkDir,
     file_version: LanceFileVersion,
 ) -> Vec<Arc<FileReader>> {
-    // let io_loop = Arc::new(IoLoop::new(64));
-
     let mut files_lookup = Vec::with_capacity(args.num_files);
     let store = work_dir.lance_object_store();
     let cache = FileMetadataCache::new(usize::MAX);

@@ -17,3 +17,19 @@ pub fn drop_caches() {
         );
     }
 }
+
+pub fn drop_path_from_cache(path: &str) {
+    let out = Command::new("dd")
+        .arg(format!("of={}", path))
+        .arg("oflag=nocache")
+        .arg("conv=notrunc,fdatasync")
+        .arg("count=0")
+        .output()
+        .unwrap();
+    if !out.status.success() {
+        panic!(
+            "Failed to drop caches: {}",
+            std::str::from_utf8(&out.stderr).unwrap()
+        );
+    }
+}
