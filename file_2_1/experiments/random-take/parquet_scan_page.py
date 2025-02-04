@@ -11,6 +11,18 @@ categories = df["category"].unique().tolist()
 num_page_sizes = len(page_sizes)
 fig, ax = plt.subplots()
 
+fig.set_dpi(150)
+fig.set_size_inches(4, 3)
+
+categories_of_interest = {
+    "prompts": "-",
+    "reviews": "--",
+    "code": "-.",
+    "dates": ":",
+}
+
+ax.set_ylabel("normalized performance")
+
 for cat_idx, category in enumerate(categories):
     filtered = df[df["category"] == category]
 
@@ -19,14 +31,22 @@ for cat_idx, category in enumerate(categories):
 
     ax.yaxis.set_major_locator(matplotlib.ticker.LinearLocator(3))
 
-    ax.plot(
-        filtered["page_size_kb"],
-        norm_perf,
-        label=category,
-    )
+    if category in categories_of_interest:
+        ax.plot(
+            filtered["page_size_kb"],
+            norm_perf,
+            label=category,
+            linestyle=categories_of_interest[category],
+        )
+    else:
+        ax.plot(
+            filtered["page_size_kb"],
+            norm_perf,
+            color="gray",
+            alpha=0.5,
+        )
 
 ax.legend()
 
-plt.suptitle("Parquet Full Scan")
-plt.savefig("parquet_scan.png", bbox_inches="tight")
+plt.savefig("parquet_scan_page.png", bbox_inches="tight")
 plt.close()

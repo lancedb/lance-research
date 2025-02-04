@@ -5,17 +5,9 @@ import os
 import shutil
 import subprocess
 
-TAKE_SIZES = [1, 16, 256]
-PAGE_SIZES = [8, 64, 256]
+PAGE_SIZES = [8, 16, 32, 64, 128, 256, 512, 1024]
 COLUMNS = [
-    "scalar",
-    "string",
     "vector",
-    "scalar-list",
-    "string-list",
-    "vector-list",
-    "binary",
-    "binary-list",
 ]
 
 

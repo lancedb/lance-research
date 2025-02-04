@@ -5,6 +5,7 @@ use std::io::Read;
 use std::sync::Arc;
 
 use bytes::{Buf, BytesMut};
+use futures::{StreamExt, TryStreamExt};
 use object_store::aws::AmazonS3Builder;
 use object_store::buffered::BufWriter;
 use object_store::local::LocalFileSystem;
@@ -226,16 +227,41 @@ impl WorkDir {
         }
     }
 
-    pub fn local_file(&self, path: Path) -> ReadAtFile {
+    fn local_path(&self, path: &Path) -> String {
         assert!(!self.is_s3);
-        let path_str = format!("/{}", path);
-        let path = std::path::Path::new(&path_str);
-        let file = std::fs::OpenOptions::new().read(true).open(path).unwrap();
-        ReadAtFile::new(file)
+        format!("/{}", path)
+    }
+
+    fn local_std_file(&self, path: Path) -> std::fs::File {
+        let path = self.local_path(&path);
+        std::fs::OpenOptions::new().read(true).open(path).unwrap()
+    }
+
+    pub fn local_file(&self, path: Path) -> ReadAtFile {
+        ReadAtFile::new(self.local_std_file(path))
     }
 
     pub fn child_path(&self, path: &str) -> Path {
         self.path.child(path)
+    }
+
+    pub async fn clean(&self, path: &Path) {
+        self.object_store
+            .delete_stream(
+                futures::stream::iter(
+                    self.object_store
+                        .list_with_delimiter(Some(path))
+                        .await
+                        .unwrap()
+                        .objects
+                        .into_iter()
+                        .map(|x| Ok(x.location)),
+                )
+                .boxed(),
+            )
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
     }
 
     pub fn writer(&self, dest_path: Path) -> BufWriter {
@@ -251,7 +277,14 @@ impl WorkDir {
     }
 
     pub async fn copy(&self, src_path: &Path, dest_path: &Path) {
-        self.object_store.copy(&src_path, &dest_path).await.unwrap();
+        if self.is_s3 {
+            self.object_store.copy(&src_path, &dest_path).await.unwrap();
+        } else {
+            // Can't use object_store here because it creates a hard link
+            let src_path = self.local_path(src_path);
+            let dst_path = self.local_path(dest_path);
+            std::fs::copy(src_path, dst_path).unwrap();
+        }
     }
 
     pub fn lance_object_store(&self) -> Arc<lance_io::object_store::ObjectStore> {

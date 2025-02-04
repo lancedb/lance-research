@@ -31,6 +31,7 @@ pub async fn make_lance_file(
     data_type: DataTypeChoice,
     work_dir: &WorkDir,
     file_version: LanceFileVersion,
+    nullable: bool,
 ) {
     let dest_path = lance_file_path(work_dir, file_version, chunk_index, data_type);
     if work_dir.exists(&dest_path).await {
@@ -43,7 +44,7 @@ pub async fn make_lance_file(
         dest_path, file_version
     ));
 
-    let datagen = get_datagen(data_type, rows_per_chunk);
+    let datagen = get_datagen(data_type, rows_per_chunk, nullable);
 
     let obj_writer = work_dir.lance_writer(dest_path).await;
 
@@ -67,6 +68,7 @@ pub async fn lance_global_setup(
     data_type: DataTypeChoice,
     work_dir: &WorkDir,
     file_version: LanceFileVersion,
+    nullable: bool,
 ) {
     for chunk_index in 0..num_chunks {
         make_lance_file(
@@ -75,6 +77,7 @@ pub async fn lance_global_setup(
             data_type,
             work_dir,
             file_version,
+            nullable,
         )
         .await;
     }

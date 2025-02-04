@@ -175,6 +175,8 @@ async fn setup_parquet(workdir: &WorkDir, category: &str, page_size_kb: usize) {
         "Setting up parquet test files for category {}",
         category
     ));
+    let base_path = workdir.child_path("parquets");
+    workdir.clean(&base_path).await;
     let src_path = src_path(&category);
     for file_index in 0..ARGS.num_files {
         let dest_path = workdir.child_path("parquets").child(test_pq_file_path(
@@ -207,14 +209,14 @@ async fn setup_parquet(workdir: &WorkDir, category: &str, page_size_kb: usize) {
     }
 }
 
-async fn bench_parquet_one(path: Path, is_large: bool) -> (usize, usize) {
+async fn bench_parquet_one(path: Path, batch_size: Option<usize>) -> (usize, usize) {
     let path = format!("/{}", path);
     drop_path_from_cache(&path);
     let f = tokio::fs::File::open(path).await.unwrap();
     let disk_bytes = f.metadata().await.unwrap().len() as usize;
     let mut stream_builder = ParquetRecordBatchStreamBuilder::new(f).await.unwrap();
-    if is_large {
-        stream_builder = stream_builder.with_batch_size(128);
+    if let Some(batch_size) = batch_size {
+        stream_builder = stream_builder.with_batch_size(batch_size);
     }
     let stream = stream_builder.build().unwrap();
 
@@ -231,8 +233,13 @@ async fn bench_parquet_one(path: Path, is_large: bool) -> (usize, usize) {
 
 // These categories have such large items we need to use a smaller batch_size
 // so that we don't trigger thrashing
-fn is_large(category: &str) -> bool {
-    category == "websites" || category == "images" || category == "code"
+fn get_batch_size(category: &str) -> Option<usize> {
+    match category {
+        "embeddings" => Some(1024),
+        "websites" | "code" => Some(128),
+        "images" => Some(32),
+        _ => None,
+    }
 }
 
 async fn run_bench_parquet(work_dir: &WorkDir, category: &str, page_size_kb: usize) {
@@ -245,7 +252,7 @@ async fn run_bench_parquet(work_dir: &WorkDir, category: &str, page_size_kb: usi
         ARGS.concurrency
     };
 
-    let is_large = is_large(category);
+    let batch_size = get_batch_size(category);
 
     let (iterations, disk_bytes, mem_bytes) = if ARGS.duration_seconds == 0.0 {
         let path = test_pq_file_path(category, 0, page_size_kb);
@@ -280,7 +287,7 @@ async fn run_bench_parquet(work_dir: &WorkDir, category: &str, page_size_kb: usi
             log(format!("There are {} pages", num_pages));
         }
 
-        let (disk_bytes, mem_bytes) = bench_parquet_one(path, is_large).await;
+        let (disk_bytes, mem_bytes) = bench_parquet_one(path, batch_size).await;
         (1, disk_bytes, mem_bytes)
     } else {
         let task_iter = (0..ARGS.num_files)
@@ -289,7 +296,7 @@ async fn run_bench_parquet(work_dir: &WorkDir, category: &str, page_size_kb: usi
             .map(|file_index| {
                 let path = test_pq_file_path(category, file_index, page_size_kb);
                 let path = work_dir.child_path("parquets").child(path);
-                tokio::task::spawn(bench_parquet_one(path, is_large))
+                tokio::task::spawn(bench_parquet_one(path, batch_size))
             })
             .map(|task| task.map(|res| res.unwrap()));
 
@@ -338,8 +345,9 @@ async fn write_lance_test_file(
     src_path: &str,
     dest_path: Path,
     file_version: LanceFileVersion,
+    category: &str,
 ) {
-    let test_data = read_test_data(src_path).await;
+    let mut test_data = read_test_data(src_path).await;
 
     let obj_writer = workdir.lance_writer(dest_path).await;
 
@@ -351,7 +359,15 @@ async fn write_lance_test_file(
         },
     );
 
-    writer.write_batch(&test_data).await.unwrap();
+    // We slice manually here since auto-slicing of large batches into smaller pages isn't yet implemented in Lance
+    let batch_size = get_batch_size(category).unwrap_or(32 * 1024);
+
+    while test_data.num_rows() > 0 {
+        let this_batch_size = batch_size.min(test_data.num_rows());
+        let batch = test_data.slice(0, this_batch_size);
+        writer.write_batch(&batch).await.unwrap();
+        test_data = test_data.slice(this_batch_size, test_data.num_rows() - this_batch_size);
+    }
 
     writer.finish().await.unwrap();
 }
@@ -361,6 +377,8 @@ async fn setup_lance(workdir: &WorkDir, category: &str, version: LanceFileVersio
         "Setting up lance test files for category {}",
         category
     ));
+    let base_path = workdir.child_path(&format!("lances_{}", version));
+    workdir.clean(&base_path).await;
     let src_path = src_path(&category);
     for file_index in 0..ARGS.num_files {
         let dest_path = workdir
@@ -374,7 +392,7 @@ async fn setup_lance(workdir: &WorkDir, category: &str, version: LanceFileVersio
                 dest_path, src_path
             ));
             if file_index == 0 {
-                write_lance_test_file(workdir, &src_path, dest_path, version).await;
+                write_lance_test_file(workdir, &src_path, dest_path, version, category).await;
             } else {
                 let base_file = workdir
                     .child_path(&format!("lances_{}", version))
@@ -391,18 +409,19 @@ async fn setup_lance(workdir: &WorkDir, category: &str, version: LanceFileVersio
 
 async fn bench_lance_one(
     scheduler: Arc<ScanScheduler>,
-    task_index: usize,
+    _task_index: usize,
     path: Path,
-    is_large: bool,
+    batch_size: Option<usize>,
 ) -> (usize, usize) {
     drop_path_from_cache(&format!("/{}", path));
 
     let file_scheduler = scheduler
-        .open_file_with_priority(&path, task_index as u64)
+        .open_file(&path)
+        // .open_file_with_priority(&path, task_index as u64)
         .await
         .unwrap();
 
-    let batch_size = if is_large { 128 } else { 32 * 1024 };
+    let batch_size = batch_size.unwrap_or(32 * 1024) as u32;
 
     let disk_bytes = file_scheduler.reader().size().await.unwrap();
 
@@ -449,7 +468,7 @@ async fn run_bench_lance(work_dir: &WorkDir, category: &str, version: LanceFileV
         ARGS.concurrency
     };
 
-    let is_large = is_large(category);
+    let batch_size = get_batch_size(category);
 
     let store = work_dir.lance_object_store();
     let scheduler_config = SchedulerConfig::max_bandwidth(&store);
@@ -461,7 +480,7 @@ async fn run_bench_lance(work_dir: &WorkDir, category: &str, version: LanceFileV
             .child_path(&format!("lances_{}", version))
             .child(path);
 
-        let (disk_bytes, mem_bytes) = bench_lance_one(scheduler, 0, path, is_large).await;
+        let (disk_bytes, mem_bytes) = bench_lance_one(scheduler, 0, path, batch_size).await;
         (1, disk_bytes, mem_bytes)
     } else {
         let task_iter = (0..ARGS.num_files)
@@ -478,7 +497,7 @@ async fn run_bench_lance(work_dir: &WorkDir, category: &str, version: LanceFileV
                     scheduler.clone(),
                     task_index,
                     path,
-                    is_large,
+                    batch_size,
                 ))
             })
             .map(|task| task.map(|res| res.unwrap()));
@@ -554,10 +573,12 @@ async fn main() {
 
     let workdir = WorkDir::new(&ARGS.workdir).await;
 
-    for page_size in page_sizes {
-        for category in get_test_categories() {
+    for category in get_test_categories() {
+        for page_size in &page_sizes {
+            let _ = std::fs::remove_dir_all("/tmp/parquets");
+            let _ = std::fs::remove_dir_all("/tmp/lances_2.1");
             match ARGS.format {
-                FileFormat::Parquet => bench_parquet(&workdir, &category, page_size).await,
+                FileFormat::Parquet => bench_parquet(&workdir, &category, *page_size).await,
                 FileFormat::Lance2_0 => todo!(),
                 FileFormat::Lance2_1 => {
                     bench_lance(&workdir, &category, LanceFileVersion::V2_1).await

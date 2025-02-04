@@ -1,8 +1,11 @@
 use core::str;
 use std::{
     collections::VecDeque,
-    sync::{atomic::Ordering, Arc},
-    time::Instant,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
 };
 
 use arrow_array::UInt32Array;
@@ -37,7 +40,7 @@ use random_take_bench::{
     util::RandomIndices,
     DataTypeChoice, FileFormat, LOG_READS, SHOULD_LOG, TAKE_COUNTER,
 };
-use tracing::{instrument, Level};
+use tracing::{instrument, warn, Level};
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_core::LevelFilter;
 use tracing_subscriber::prelude::*;
@@ -126,6 +129,14 @@ struct Args {
     #[arg(short, long, default_value_t = false)]
     cache_metadata: bool,
 
+    /// (parquet only) Whether or not to use compression
+    #[arg(short, long, default_value_t = false)]
+    compression: bool,
+
+    /// (parquet only) Whether or not to use dictionary encoding
+    #[arg(short, long, default_value_t = false)]
+    dictionary: bool,
+
     /// If true, use the async reader
     #[arg(short, long, default_value_t = false)]
     r#async: bool,
@@ -142,6 +153,10 @@ struct Args {
     #[arg(long, default_value_t = false)]
     log_reads: bool,
 
+    /// If true, enable rust logging via env_logger, not compatible with tracing
+    #[arg(long, default_value_t = false)]
+    rust_logging: bool,
+
     /// Number of files to read from
     #[arg(short, long, default_value_t = 1024)]
     num_files: usize,
@@ -153,6 +168,10 @@ struct Args {
     /// If quiet then only print the result
     #[arg(short, long, default_value_t = false)]
     quiet: bool,
+
+    /// If true, don't use nullable data
+    #[arg(long, default_value_t = false)]
+    non_nullable: bool,
 
     /// The file format to use
     #[arg(long, value_enum, default_value_t = FileFormat::Parquet)]
@@ -214,6 +233,8 @@ fn parquet_setup_sync(args: &Args, work_dir: &WorkDir) -> Vec<Option<ArrowReader
             args.page_size_kb,
             chunk_index,
             args.data_type,
+            args.compression,
+            args.dictionary,
         );
         if work_dir.is_s3() {
             let file = work_dir.s3_file(path);
@@ -336,13 +357,7 @@ fn bench_parquet_one<T: FileLike>(
     task_pool
 }
 
-fn bench_lance_one(
-    args: &Args,
-    indices: &RandomIndices,
-    readers: Arc<[Arc<FileReader>]>,
-    rt: Arc<tokio::runtime::Runtime>,
-) -> Arc<TaskPool> {
-    let task_pool = Arc::new(TaskPool::new(rt));
+fn bench_lance_one(args: &Args, indices: &RandomIndices, readers: &[Arc<FileReader>]) {
     let indices = indices.next(args.take_size);
 
     #[instrument]
@@ -363,37 +378,33 @@ fn bench_lance_one(
 
     let rows_per_file = args.rows_per_file;
 
-    task_pool.spawn(move || {
-        let _span = tracing::span!(tracing::Level::INFO, "lance_take").entered();
-        let mut indices = indices.to_vec();
-        indices.sort_unstable();
+    let _span = tracing::span!(tracing::Level::INFO, "lance_take").entered();
+    let mut indices = indices.to_vec();
+    indices.sort_unstable();
 
-        let mut indices_for_file = Vec::with_capacity(indices.len());
-        let mut current_chunk = 0;
+    let mut indices_for_file = Vec::with_capacity(indices.len());
+    let mut current_chunk = 0;
 
-        for index in indices {
-            let chunk_index = index / rows_per_file as u64;
-            let chunk_offset = (index % rows_per_file as u64) as u32;
-            if chunk_index == current_chunk {
-                indices_for_file.push(chunk_offset);
-            } else {
-                if !indices_for_file.is_empty() {
-                    let reader = readers[current_chunk as usize].clone();
-                    let task_indices = indices_for_file.clone();
-                    file_take(reader, task_indices);
-                    indices_for_file.clear();
-                }
-                current_chunk = chunk_index;
-                indices_for_file.push(chunk_offset);
+    for index in indices {
+        let chunk_index = index / rows_per_file as u64;
+        let chunk_offset = (index % rows_per_file as u64) as u32;
+        if chunk_index == current_chunk {
+            indices_for_file.push(chunk_offset);
+        } else {
+            if !indices_for_file.is_empty() {
+                let reader = readers[current_chunk as usize].clone();
+                let task_indices = indices_for_file.clone();
+                file_take(reader, task_indices);
+                indices_for_file.clear();
             }
+            current_chunk = chunk_index;
+            indices_for_file.push(chunk_offset);
         }
-        if !indices_for_file.is_empty() {
-            let reader = readers[current_chunk as usize].clone();
-            file_take(reader, indices_for_file);
-        }
-    });
-
-    task_pool
+    }
+    if !indices_for_file.is_empty() {
+        let reader = readers[current_chunk as usize].clone();
+        file_take(reader, indices_for_file);
+    }
 }
 
 fn open_s3_files(work_dir: &WorkDir, num_chunks: usize, args: &Args) -> Vec<ObjectStoreFile> {
@@ -405,6 +416,8 @@ fn open_s3_files(work_dir: &WorkDir, num_chunks: usize, args: &Args) -> Vec<Obje
                 args.page_size_kb,
                 chunk_index,
                 args.data_type,
+                args.compression,
+                args.dictionary,
             );
             work_dir.s3_file(path)
         })
@@ -420,6 +433,8 @@ fn open_local_files(work_dir: &WorkDir, num_chunks: usize, args: &Args) -> Vec<R
                 args.page_size_kb,
                 chunk_index,
                 args.data_type,
+                args.compression,
+                args.dictionary,
             );
             work_dir.local_file(path)
         })
@@ -497,43 +512,68 @@ fn run_bench_parquet<T: FileLike>(
 
 async fn run_bench_lance(
     args: &Args,
-    indices: &RandomIndices,
+    indices: &Arc<RandomIndices>,
     readers: Arc<[Arc<FileReader>]>,
 ) -> f64 {
     if args.drop_caches {
         drop_caches();
     }
 
-    let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().build().unwrap());
+    let rt = Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .max_blocking_threads(args.concurrency)
+            .build()
+            .unwrap(),
+    );
 
     let start = Instant::now();
+    let _span = tracing::span!(tracing::Level::INFO, "run_bench_lance").entered();
 
     log("Running benchmark");
     let iterations = if args.duration_seconds == 0.0 {
         // Special case, run once
-        bench_lance_one(args, &indices, readers, rt.clone()).join();
+        bench_lance_one(args, &indices, readers.as_ref());
         1
     } else {
+        let finished = Arc::new(AtomicBool::new(false));
         let mut parallelism = args.concurrency;
         if parallelism == 0 {
             parallelism = num_cpus::get();
         }
 
-        let mut iterations = 0;
-        let mut ongoing_takes = VecDeque::with_capacity(parallelism);
+        fn task_loop(
+            args: &Args,
+            indices: &RandomIndices,
+            readers: &[Arc<FileReader>],
+            finished: Arc<AtomicBool>,
+        ) -> usize {
+            let mut iterations = 0;
+            while !finished.load(Ordering::Acquire) {
+                bench_lance_one(args, &indices, readers.as_ref());
+                iterations += 1;
+            }
+            iterations
+        }
+
+        let mut tasks = Vec::with_capacity(parallelism);
         for _ in 0..parallelism {
-            ongoing_takes.push_front(bench_lance_one(args, &indices, readers.clone(), rt.clone()));
+            let args = args.clone();
+            let indices = indices.clone();
+            let readers = readers.clone();
+            let finished = finished.clone();
+            tasks.push(tokio::task::spawn_blocking(move || {
+                task_loop(&args, &indices, readers.as_ref(), finished)
+            }));
         }
-        // Normal case, run for X seconds
-        while start.elapsed().as_secs_f64() < args.duration_seconds {
-            ongoing_takes.pop_back().unwrap().join();
-            iterations += 1;
-            ongoing_takes.push_front(bench_lance_one(args, &indices, readers.clone(), rt.clone()));
-        }
-        // Drain ongoing tasks (it's ok if we go a little past X seconds because we measure elapsed down below)
-        for ongoing_take in ongoing_takes {
-            ongoing_take.join();
-            iterations += 1;
+
+        let remaining =
+            Duration::from_secs_f64(args.duration_seconds - start.elapsed().as_secs_f64());
+        tokio::time::sleep(remaining).await;
+        finished.store(true, Ordering::Release);
+
+        let mut iterations = 0;
+        for task in tasks {
+            iterations += task.await.unwrap();
         }
         iterations
     };
@@ -547,6 +587,7 @@ async fn run_bench_lance(
     let rows_taken = iterations as f64 * args.take_size as f64;
     assert_eq!(rows_taken as usize, TAKE_COUNTER.load(Ordering::Acquire));
     let rows_taken_per_second = rows_taken / start.elapsed().as_secs_f64();
+    drop(_span);
 
     Arc::into_inner(rt).unwrap().shutdown_background();
 
@@ -561,6 +602,9 @@ async fn bench_parquet(args: &Args, work_dir: &WorkDir) -> f64 {
         args.num_files,
         args.data_type,
         work_dir,
+        args.compression,
+        args.dictionary,
+        !args.non_nullable,
     )
     .await;
 
@@ -592,11 +636,12 @@ async fn bench_lance(args: &Args, work_dir: &WorkDir, file_version: LanceFileVer
         args.data_type,
         work_dir,
         file_version,
+        !args.non_nullable,
     )
     .await;
 
     log("Randomizing indices");
-    let indices = RandomIndices::new(args.rows_per_file, args.num_files).await;
+    let indices = Arc::new(RandomIndices::new(args.rows_per_file, args.num_files).await);
 
     log("Loading file readers");
     let readers_lookup = lance_setup(args, work_dir, file_version).await;
@@ -626,6 +671,10 @@ async fn main() {
 
     if !args.quiet {
         SHOULD_LOG.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    if args.rust_logging {
+        env_logger::init();
     }
 
     let workdir = args

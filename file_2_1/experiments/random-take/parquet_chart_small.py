@@ -10,6 +10,17 @@ df = pd.read_csv("parquet_local.csv")
 take_sizes = df["take_size"].unique().tolist()
 datatypes = df["column"].unique().tolist()
 
+datatypes = [
+    "scalar",
+    "string",
+    "scalar-list",
+    "string-list",
+    "vector",
+    "vector-list",
+    "binary",
+    "binary-list",
+]
+
 num_take_sizes = len(take_sizes)
 print(f"There are {num_take_sizes} take sizes")
 fig, ax = plt.subplots()

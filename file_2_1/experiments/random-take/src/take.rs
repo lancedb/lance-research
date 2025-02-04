@@ -293,6 +293,9 @@ mod tests {
             MOCK_CHUNK_INDEX,
             MOCK_DATA_TYPE,
             &work_dir,
+            false,
+            false,
+            false,
         )
         .await;
     }
@@ -308,6 +311,8 @@ mod tests {
             MOCK_PAGE_SIZE_KB,
             MOCK_CHUNK_INDEX,
             MOCK_DATA_TYPE,
+            false,
+            false,
         ));
         let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().build().unwrap());
 
@@ -327,6 +332,8 @@ mod tests {
             MOCK_PAGE_SIZE_KB,
             MOCK_CHUNK_INDEX,
             MOCK_DATA_TYPE,
+            false,
+            false,
         ));
         let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().build().unwrap());
 

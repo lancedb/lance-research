@@ -13,8 +13,8 @@ configs = [
 
 fig, axes = plt.subplots(len(configs))
 
-# fig.set_figwidth(12.8)
-# fig.set_figheight(9.6)
+fig.set_dpi(150)
+fig.set_size_inches(4, 3)
 
 for i, (filename, label, num_threads) in enumerate(configs):
     # Disk plot

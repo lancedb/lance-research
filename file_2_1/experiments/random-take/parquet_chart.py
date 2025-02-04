@@ -21,6 +21,7 @@ for ps_idx, page_size in enumerate(page_sizes):
         filtered = df[
             (df["page_size_kb"] == page_size) & (df["take_size"] == take_size)
         ]
+        filtered = filtered.sort_values(by="takes_per_second", ascending=False)
 
         ax = axes[ps_idx][ts_idx]
         if ps_idx == 0 and ts_idx == 0:
