@@ -12,10 +12,11 @@ use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use parquet::file::reader::{ChunkReader, Length};
+use tracing::instrument;
 
 use crate::sync::RT;
 use crate::take::TryClone;
-use crate::{log, LOG_READS};
+use crate::{log, IOPS_COUNTER, LOG_READS};
 
 /// Marker trait for types that can be used as a file-like object
 pub trait FileLike: ChunkReader + TryClone + std::fmt::Debug + 'static {}
@@ -92,6 +93,7 @@ pub struct ReadAtReader {
 }
 
 impl Read for ReadAtReader {
+    #[instrument(skip_all)]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let _span = tracing::info_span!("read").entered();
         let offset = self.cursor;
@@ -136,6 +138,7 @@ impl ChunkReader for ReadAtFile {
         if LOG_READS.load(std::sync::atomic::Ordering::Acquire) {
             log(format!("Reading {} bytes", length));
         }
+        IOPS_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Release);
         let mut buf = BytesMut::with_capacity(length);
         unsafe {
             buf.set_len(length);

@@ -38,7 +38,7 @@ use random_take_bench::{
     take::{take, TryClone},
     threading::TaskPool,
     util::RandomIndices,
-    DataTypeChoice, FileFormat, LOG_READS, SHOULD_LOG, TAKE_COUNTER,
+    DataTypeChoice, FileFormat, IOPS_COUNTER, LOG_READS, SHOULD_LOG, TAKE_COUNTER,
 };
 use tracing::{instrument, warn, Level};
 use tracing_chrome::ChromeLayerBuilder;
@@ -77,6 +77,7 @@ impl std::future::Future for DoOnPoll {
                 if LOG_READS.load(std::sync::atomic::Ordering::Acquire) {
                     log(format!("Reading {} bytes", length));
                 }
+                IOPS_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Release);
                 let mut buf = BytesMut::with_capacity(length);
                 unsafe {
                     buf.set_len(length);
@@ -532,7 +533,12 @@ async fn run_bench_lance(
     log("Running benchmark");
     let iterations = if args.duration_seconds == 0.0 {
         // Special case, run once
-        bench_lance_one(args, &indices, readers.as_ref());
+        let args = args.clone();
+        let indices = indices.clone();
+        let readers = readers.clone();
+        tokio::task::spawn_blocking(move || bench_lance_one(&args, &indices, readers.as_ref()))
+            .await
+            .unwrap();
         1
     } else {
         let finished = Arc::new(AtomicBool::new(false));
@@ -696,6 +702,7 @@ async fn main() {
         "Rows taken per second across {} seconds: {}",
         args.duration_seconds, rows_taken_per_second,
     ));
+    log(format!("IOPS: {}", IOPS_COUNTER.load(Ordering::Acquire)));
     if args.quiet {
         println!("{}", rows_taken_per_second);
     }

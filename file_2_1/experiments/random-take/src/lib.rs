@@ -18,6 +18,8 @@ pub mod util;
 /// Static flag to enable logging of reads
 pub static LOG_READS: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
 
+pub static IOPS_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
 pub static SHOULD_LOG: AtomicBool = AtomicBool::new(false);
 pub fn log(msg: impl AsRef<str>) {
     if SHOULD_LOG.load(std::sync::atomic::Ordering::Acquire) {

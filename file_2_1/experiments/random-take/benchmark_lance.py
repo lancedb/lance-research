@@ -13,9 +13,9 @@ COLUMNS = [
     "scalar-list",
     "string-list",
     "vector",
-    "vector-list",
     "binary",
     "binary-list",
+    "vector-list",
 ]
 
 

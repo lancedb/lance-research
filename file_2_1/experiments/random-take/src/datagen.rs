@@ -11,7 +11,7 @@ use crate::DataTypeChoice;
 
 const WRITE_BATCH_SIZE: usize = 32 * 1024;
 // 768 x fp32 is a very common embedding type
-const EMBEDDING_SIZE: u32 = 1024;
+const EMBEDDING_SIZE: u32 = 768;
 // Binary values are randomly generated with a size between 16KB and 24KB
 const MIN_BINARY_SIZE: u64 = 16 * 1024;
 const MAX_BINARY_SIZE: u64 = 24 * 1024;

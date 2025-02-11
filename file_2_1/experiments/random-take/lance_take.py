@@ -42,24 +42,26 @@ ax.plot(
 )
 
 ardf = pd.read_csv("lance_old_take.csv")
-arfiltered = ardf[(ardf["take_size"] == 256)]
+arfiltered = ardf[(ardf["take_size"] == 1)]
 ax.plot(
     arfiltered["column"],
     arfiltered["takes_per_second"],
-    label="arrow",
+    label="lance 2.0",
     color="red",
     linestyle=":",
     alpha=0.5,
 )
 
 for ts_idx, take_size in enumerate(take_sizes):
-    filtered = df[df["take_size"] == take_size]
+    if take_size == 1:
+        filtered = df[df["take_size"] == take_size]
 
-    ax.plot(
-        filtered["column"],
-        filtered["takes_per_second"],
-        label=f"k={take_size}",
-    )
+        ax.plot(
+            filtered["column"],
+            filtered["takes_per_second"],
+            # label=f"k={take_size}",
+            label="lance 2.1",
+        )
 
 ax.legend()
 

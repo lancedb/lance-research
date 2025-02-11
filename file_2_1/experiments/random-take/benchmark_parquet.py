@@ -37,7 +37,7 @@ def get_bench_args(
         str(page_size),
         "--drop-caches",
         "--concurrency",
-        "256",
+        "128",
         "--quiet",
     ]
 
