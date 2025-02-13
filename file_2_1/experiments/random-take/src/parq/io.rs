@@ -11,15 +11,18 @@ use object_store::buffered::BufWriter;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
+use once_cell::sync::Lazy;
 use parquet::file::reader::{ChunkReader, Length};
 use tracing::instrument;
 
-use crate::sync::RT;
 use crate::take::TryClone;
 use crate::{log, IOPS_COUNTER, LOG_READS};
 
 /// Marker trait for types that can be used as a file-like object
 pub trait FileLike: ChunkReader + TryClone + std::fmt::Debug + 'static {}
+
+pub static OS_RT: Lazy<tokio::runtime::Runtime> =
+    Lazy::new(|| tokio::runtime::Runtime::new().unwrap());
 
 /// Wraps an ObjectStore and a Path to provide a ChunkReader implementation
 #[derive(Debug)]
@@ -30,7 +33,8 @@ pub struct ObjectStoreFile {
 
 impl Length for ObjectStoreFile {
     fn len(&self) -> u64 {
-        RT.block_on(self.object_store.head(&self.location))
+        OS_RT
+            .block_on(self.object_store.head(&self.location))
             .unwrap()
             .size as u64
     }
@@ -46,7 +50,7 @@ pub struct ObjectStoreReader {
 impl std::io::Read for ObjectStoreReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let range = (self.offset as usize)..(self.offset as usize + buf.len());
-        let mut bytes = RT
+        let mut bytes = OS_RT
             .block_on(self.object_store.get_range(&self.location, range))
             .unwrap();
         bytes.copy_to_slice(buf);
@@ -67,7 +71,7 @@ impl ChunkReader for ObjectStoreFile {
 
     fn get_bytes(&self, start: u64, length: usize) -> parquet::errors::Result<bytes::Bytes> {
         let range = (start as usize)..(start as usize + length);
-        Ok(RT
+        Ok(OS_RT
             .block_on(self.object_store.get_range(&self.location, range))
             .unwrap())
     }
