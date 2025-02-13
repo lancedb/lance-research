@@ -19,7 +19,10 @@ use lance_encoding::{
     EncodingsIo,
 };
 use lance_file::{
-    v2::reader::{FileReader, FileReaderOptions},
+    v2::{
+        reader::{FileReader, FileReaderOptions},
+        LanceEncodingsIo,
+    },
     version::LanceFileVersion,
 };
 use lance_io::{
@@ -275,8 +278,12 @@ async fn lance_setup(
                 .unwrap(),
         );
 
-        let file = work_dir.local_file(path.clone());
-        let io = Arc::new(BlockingEncodingsIo::new(file));
+        let io: Arc<dyn EncodingsIo> = if work_dir.is_s3() {
+            Arc::new(LanceEncodingsIo(file_scheduler))
+        } else {
+            let file = work_dir.local_file(path.clone());
+            Arc::new(BlockingEncodingsIo::new(file))
+        };
 
         let reader = FileReader::try_open_with_file_metadata(
             io,
