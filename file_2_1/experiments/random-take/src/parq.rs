@@ -3,7 +3,11 @@
 use arrow_array::RecordBatchReader;
 use io::WorkDir;
 use object_store::path::Path;
-use parquet::{arrow::AsyncArrowWriter, basic::Compression, file::properties::WriterProperties};
+use parquet::{
+    arrow::AsyncArrowWriter,
+    basic::Compression,
+    file::properties::{EnabledStatistics, WriterProperties},
+};
 
 use crate::{datagen::get_datagen, log, DataTypeChoice};
 
@@ -118,6 +122,7 @@ pub async fn make_parquet_file(
         .set_dictionary_enabled(dictionary)
         .set_max_row_group_size(row_group_size as usize)
         .set_data_page_size_limit(page_size_kb as usize * 1024)
+        .set_statistics_enabled(EnabledStatistics::None)
         .set_write_batch_size(write_batch_size)
         .build();
 

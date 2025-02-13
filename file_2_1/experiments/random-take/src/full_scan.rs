@@ -26,7 +26,9 @@ use parquet::{
         ParquetRecordBatchStreamBuilder, ProjectionMask,
     },
     file::{
-        metadata::ParquetMetaDataReader, page_index::index::Index, properties::WriterProperties,
+        metadata::ParquetMetaDataReader,
+        page_index::index::Index,
+        properties::{EnabledStatistics, WriterProperties},
     },
 };
 use random_take_bench::{
@@ -175,15 +177,17 @@ async fn write_pq_test_file(
     let test_data = read_test_data(src_path).await;
     let writer = workdir.writer(dest_path);
     let write_batch_size = get_parquet_write_batch_size(page_size_kb, test_data.column(0));
-    let options = ArrowWriterOptions::default().with_properties(
-        WriterProperties::builder()
-            .set_bloom_filter_enabled(false)
-            .set_max_row_group_size(row_group_size)
+    let mut properties_builder = WriterProperties::builder()
+        .set_bloom_filter_enabled(false)
+        .set_statistics_enabled(EnabledStatistics::Chunk)
+        .set_max_row_group_size(row_group_size)
+        .set_compression(parquet::basic::Compression::SNAPPY);
+    if page_size_kb != 0 {
+        properties_builder = properties_builder
             .set_data_page_size_limit(page_size_kb * 1024)
-            .set_write_batch_size(write_batch_size)
-            .set_compression(parquet::basic::Compression::SNAPPY)
-            .build(),
-    );
+            .set_write_batch_size(write_batch_size);
+    }
+    let options = ArrowWriterOptions::default().with_properties(properties_builder.build());
     let mut writer =
         AsyncArrowWriter::try_new_with_options(writer, test_data.schema(), options).unwrap();
 
@@ -305,10 +309,11 @@ async fn bench_parquet_one(path: Path, batch_size: Option<usize>) -> (usize, usi
 // so that we don't trigger thrashing
 fn get_batch_size(category: &str) -> Option<usize> {
     match category {
-        "embeddings" => Some(1024),
-        "websites" | "code" => Some(128),
+        "embeddings" | "code" => Some(1024),
+        "websites" => Some(128),
         "images" => Some(32),
         "dates" => Some(2 * 1024 * 1024),
+        "names" => Some(2 * 1024 * 1024),
         _ => None,
     }
 }
@@ -330,7 +335,7 @@ async fn run_bench_parquet(
 
     let batch_size = get_batch_size(category);
 
-    let (iterations, disk_bytes, mem_bytes) = if ARGS.duration_seconds == 0.0 {
+    let (iterations, one_disk_bytes, all_disk_bytes, mem_bytes) = if ARGS.duration_seconds == 0.0 {
         let path = test_pq_file_path(category, 0, row_group_size, page_size_kb);
         let path = work_dir.child_path("parquets").child(path);
 
@@ -342,12 +347,14 @@ async fn run_bench_parquet(
             let disk_bytes = f.metadata().await.unwrap().len() as usize;
             let reader = ParquetMetaDataReader::new().with_page_indexes(true);
             let metadata = reader.load_and_finish(&mut f, disk_bytes).await.unwrap();
-            let col_idx = metadata.column_index().unwrap();
+            let index = metadata.column_index().unwrap();
 
             let mut num_pages = 0;
-            for rg_idx in col_idx {
-                for pg_idx in rg_idx {
-                    num_pages += match pg_idx {
+            let mut num_row_groups = 0;
+            for rg_idx in index {
+                num_row_groups += 1;
+                for col_idx in rg_idx {
+                    num_pages += match col_idx {
                         Index::BOOLEAN(b) => b.indexes.len(),
                         Index::BYTE_ARRAY(b) => b.indexes.len(),
                         Index::DOUBLE(b) => b.indexes.len(),
@@ -356,15 +363,18 @@ async fn run_bench_parquet(
                         Index::INT32(b) => b.indexes.len(),
                         Index::INT64(b) => b.indexes.len(),
                         Index::INT96(b) => b.indexes.len(),
-                        Index::NONE => unreachable!(),
+                        Index::NONE => 0,
                     };
                 }
             }
-            log(format!("There are {} pages", num_pages));
+            log(format!(
+                "There are {} pages and {} row groups",
+                num_pages, num_row_groups
+            ));
         }
 
         let (disk_bytes, mem_bytes) = bench_parquet_one(path, batch_size).await;
-        (1, disk_bytes, mem_bytes)
+        (1, disk_bytes, disk_bytes, mem_bytes)
     } else {
         let task_iter = (0..ARGS.num_files)
             .cycle()
@@ -379,10 +389,11 @@ async fn run_bench_parquet(
         let tasks = stream::iter(task_iter).buffer_unordered(concurrency);
 
         tasks
-            .fold((0, 0, 0), |acc, (disk_bytes, mem_bytes)| async move {
-                let (iterations, acc_disk_bytes, acc_mem_bytes) = acc;
+            .fold((0, 0, 0, 0), |acc, (disk_bytes, mem_bytes)| async move {
+                let (iterations, _, acc_disk_bytes, acc_mem_bytes) = acc;
                 (
                     iterations + 1,
+                    disk_bytes,
                     disk_bytes + acc_disk_bytes,
                     mem_bytes + acc_mem_bytes,
                 )
@@ -394,20 +405,21 @@ async fn run_bench_parquet(
 
     log(format!(
         "Ran {} iterations and read {} memory bytes and {} disk bytes in {} seconds",
-        iterations, mem_bytes, disk_bytes, elapsed
+        iterations, mem_bytes, all_disk_bytes, elapsed
     ));
 
     let iterations_per_second = iterations as f64 / elapsed;
     let mem_bytes_per_second = mem_bytes as f64 / elapsed;
-    let disk_bytes_per_second = disk_bytes as f64 / elapsed;
+    let disk_bytes_per_second = all_disk_bytes as f64 / elapsed;
     println!(
-        "{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{}",
         page_size_kb,
         row_group_size,
         category,
         iterations_per_second,
         mem_bytes_per_second,
-        disk_bytes_per_second
+        disk_bytes_per_second,
+        one_disk_bytes,
     );
 }
 
@@ -563,14 +575,14 @@ async fn run_bench_lance(work_dir: &WorkDir, category: &str, version: LanceFileV
     let scheduler_config = SchedulerConfig::max_bandwidth(&store);
     let scheduler = ScanScheduler::new(store, scheduler_config);
 
-    let (iterations, disk_bytes, mem_bytes) = if ARGS.duration_seconds == 0.0 {
+    let (iterations, one_disk_bytes, all_disk_bytes, mem_bytes) = if ARGS.duration_seconds == 0.0 {
         let path = test_lance_file_path(category, 0);
         let path = work_dir
             .child_path(&format!("lances_{}", version))
             .child(path);
 
         let (disk_bytes, mem_bytes) = bench_lance_one(scheduler, 0, path, batch_size).await;
-        (1, disk_bytes, mem_bytes)
+        (1, disk_bytes, disk_bytes, mem_bytes)
     } else {
         let task_iter = (0..ARGS.num_files)
             .cycle()
@@ -594,10 +606,11 @@ async fn run_bench_lance(work_dir: &WorkDir, category: &str, version: LanceFileV
         let tasks = stream::iter(task_iter).buffer_unordered(concurrency);
 
         tasks
-            .fold((0, 0, 0), |acc, (disk_bytes, mem_bytes)| async move {
-                let (iterations, acc_disk_bytes, acc_mem_bytes) = acc;
+            .fold((0, 0, 0, 0), |acc, (disk_bytes, mem_bytes)| async move {
+                let (iterations, _, acc_disk_bytes, acc_mem_bytes) = acc;
                 (
                     iterations + 1,
+                    disk_bytes,
                     disk_bytes + acc_disk_bytes,
                     mem_bytes + acc_mem_bytes,
                 )
@@ -609,15 +622,19 @@ async fn run_bench_lance(work_dir: &WorkDir, category: &str, version: LanceFileV
 
     log(format!(
         "Ran {} iterations and read {} memory bytes and {} disk bytes in {} seconds",
-        iterations, mem_bytes, disk_bytes, elapsed
+        iterations, mem_bytes, all_disk_bytes, elapsed
     ));
 
     let iterations_per_second = iterations as f64 / elapsed;
     let mem_bytes_per_second = mem_bytes as f64 / elapsed;
-    let disk_bytes_per_second = disk_bytes as f64 / elapsed;
+    let disk_bytes_per_second = all_disk_bytes as f64 / elapsed;
     println!(
-        "0,0,{},{},{},{}",
-        category, iterations_per_second, mem_bytes_per_second, disk_bytes_per_second
+        "0,0,{},{},{},{},{}",
+        category,
+        iterations_per_second,
+        mem_bytes_per_second,
+        disk_bytes_per_second,
+        one_disk_bytes,
     );
 }
 
@@ -627,13 +644,14 @@ async fn bench_lance(work_dir: &WorkDir, category: &str, version: LanceFileVersi
     run_bench_lance(work_dir, category, version).await;
 }
 
-fn get_row_group_sizes(category: &str) -> Vec<usize> {
-    match category {
-        "embeddings" => vec![1024, 1024 * 10, 1024 * 100],
-        "websites" | "code" => vec![1024, 1024 * 10],
-        "images" => vec![100, 256, 512],
-        _ => vec![1024, 1024 * 10, 1024 * 100, 1024 * 1024],
-    }
+fn get_row_group_sizes(_category: &str) -> Vec<usize> {
+    vec![1024, 1024 * 10, 1024 * 100, 1024 * 1024]
+    // match category {
+    //     "embeddings" => vec![1024, 1024 * 10, 1024 * 100],
+    //     "code" => vec![1024, 1024 * 10],
+    //     "images" | "websites" => vec![1024, 1024 * 10, 1024 * 100],
+    //     _ => vec![1024, 1024 * 10, 1024 * 100, 1024 * 1024],
+    // }
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -656,7 +674,7 @@ async fn main() {
         SHOULD_LOG.store(true, std::sync::atomic::Ordering::Release);
     } else {
         // We only print the CSV header in quiet mode
-        println!("page_size_kb,row_group_size,category,iterations_per_second,mem_bytes_per_second,disk_bytes_per_second");
+        println!("page_size_kb,row_group_size,category,iterations_per_second,mem_bytes_per_second,disk_bytes_per_second,file_size_bytes");
     }
 
     if ARGS.log_reads {
@@ -669,7 +687,7 @@ async fn main() {
 
     let page_sizes = match (ARGS.format, ARGS.page_size_kb) {
         (FileFormat::Parquet, Some(page_size_kb)) => vec![page_size_kb],
-        (FileFormat::Parquet, None) => vec![8, 32, 64, 256, 1024],
+        (FileFormat::Parquet, None) => vec![8, 32, 64, 256, 0],
         _ => vec![0],
     };
 

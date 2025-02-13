@@ -13,7 +13,7 @@ use arrow_buffer::ScalarBuffer;
 use bytes::{Bytes, BytesMut};
 use clap::Parser;
 use futures::FutureExt;
-use lance_core::cache::FileMetadataCache;
+use lance_core::cache::{DeepSizeOf, FileMetadataCache};
 use lance_encoding::{
     decoder::{DecoderPlugins, FilterExpression},
     EncodingsIo,
@@ -174,6 +174,10 @@ struct Args {
     #[arg(long, default_value_t = false)]
     non_nullable: bool,
 
+    /// If true, print how much memory is used by the search cache and then exit
+    #[arg(long, default_value_t = false)]
+    mem_only: bool,
+
     /// The file format to use
     #[arg(long, value_enum, default_value_t = FileFormat::Parquet)]
     format: FileFormat,
@@ -287,6 +291,11 @@ async fn lance_setup(
         .unwrap();
         files_lookup.push(Arc::new(reader));
     }
+
+    if args.mem_only {
+        println!("{}", cache.deep_size_of());
+    }
+
     files_lookup
 }
 
@@ -652,6 +661,10 @@ async fn bench_lance(args: &Args, work_dir: &WorkDir, file_version: LanceFileVer
     log("Loading file readers");
     let readers_lookup = lance_setup(args, work_dir, file_version).await;
 
+    if args.mem_only {
+        return 0.0;
+    }
+
     // Don't set LOG_READS until this point to avoid logging the setup
     if args.log_reads {
         LOG_READS.store(true, std::sync::atomic::Ordering::Release);
@@ -697,6 +710,10 @@ async fn main() {
         FileFormat::Lance2_0 => bench_lance(&args, &work_dir, LanceFileVersion::V2_0).await,
         FileFormat::Lance2_1 => bench_lance(&args, &work_dir, LanceFileVersion::V2_1).await,
     };
+
+    if args.mem_only {
+        return;
+    }
 
     log(format!(
         "Rows taken per second across {} seconds: {}",
