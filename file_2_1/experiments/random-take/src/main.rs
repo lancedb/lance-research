@@ -29,6 +29,7 @@ use lance_io::{
     scheduler::{ScanScheduler, SchedulerConfig},
     ReadBatchParams,
 };
+use object_store::path::Path;
 use parquet::arrow::arrow_reader::{ArrowReaderMetadata, ArrowReaderOptions};
 use random_take_bench::{
     lance::{lance_file_path, lance_global_setup},
@@ -114,15 +115,15 @@ impl EncodingsIo for BlockingEncodingsIo {
 #[command(name="random-take", about="A benchmark for tabular file formats", version, long_about = None)]
 struct Args {
     /// How many rows to put in a row group (parquet only)
-    #[arg(short, long, default_value_t = 100000)]
+    #[arg(long, default_value_t = 100000)]
     row_group_size: usize,
 
     /// Page size (in bytes, parquet only)
-    #[arg(short, long, default_value_t = 1024)]
+    #[arg(long, default_value_t = 1024)]
     page_size_kb: usize,
 
     /// How many rows to take in each take operation
-    #[arg(short, long, default_value_t = 1024)]
+    #[arg(long, default_value_t = 1024)]
     take_size: usize,
 
     /// Which data_type to test with
@@ -130,19 +131,19 @@ struct Args {
     data_type: DataTypeChoice,
 
     /// Whether or not metadata should be cached between takes
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     cache_metadata: bool,
 
     /// (parquet only) Whether or not to use compression
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     compression: bool,
 
     /// (parquet only) Whether or not to use dictionary encoding
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     dictionary: bool,
 
     /// If true, use the async reader
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     r#async: bool,
 
     /// Number of seconds to run the benchmark
@@ -150,7 +151,7 @@ struct Args {
     duration_seconds: f64,
 
     /// If true, drop the OS cache before each iteration
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     drop_caches: bool,
 
     /// If true, log each read operation
@@ -162,15 +163,15 @@ struct Args {
     rust_logging: bool,
 
     /// Number of files to read from
-    #[arg(short, long, default_value_t = 1024)]
+    #[arg(long, default_value_t = 1024)]
     num_files: usize,
 
     /// Number of rows per file
-    #[arg(short, long, default_value_t = 1024 * 1024)]
+    #[arg(long, default_value_t = 1024 * 1024)]
     rows_per_file: usize,
 
     /// If quiet then only print the result
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     quiet: bool,
 
     /// If true, don't use nullable data
@@ -190,7 +191,7 @@ struct Args {
     concurrency: usize,
 
     /// URI of the working directory.  Must be file:// or s3://
-    #[arg(short, long)]
+    #[arg(long)]
     workdir: Option<String>,
 
     /// If true, enables tracing
@@ -284,6 +285,8 @@ async fn lance_setup(
             let file = work_dir.local_file(path.clone());
             Arc::new(BlockingEncodingsIo::new(file))
         };
+
+        let cache = cache.with_base_path(Path::parse(format!("{}", chunk_index)).unwrap());
 
         let reader = FileReader::try_open_with_file_metadata(
             io,
