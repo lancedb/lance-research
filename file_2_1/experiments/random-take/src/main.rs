@@ -364,7 +364,8 @@ fn bench_parquet_one<T: FileLike>(
     let task_pool = Arc::new(TaskPool::new(rt));
 
     let args = args.clone();
-    let indices = indices.next(args.take_size);
+    // Allow dupes if we are not dropping caches
+    let indices = indices.next(args.take_size, !args.drop_caches);
     parquet_random_take_sync(
         files,
         args.rows_per_file,
@@ -378,7 +379,7 @@ fn bench_parquet_one<T: FileLike>(
 }
 
 fn bench_lance_one(args: &Args, indices: &RandomIndices, readers: &[Arc<FileReader>]) {
-    let indices = indices.next(args.take_size);
+    let indices = indices.next(args.take_size, !args.drop_caches);
 
     #[instrument]
     fn file_take(reader: Arc<FileReader>, indices: Vec<u32>) {

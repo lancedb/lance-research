@@ -22,7 +22,7 @@ NUM_FILES = [
 ]
 
 
-def get_bench_args(column_type: str, num_files: int):
+def get_bench_args(column_type: str, num_files: int, keep_cache: bool):
     args = [
         "target/release/main",
         "--workdir",
@@ -34,24 +34,29 @@ def get_bench_args(column_type: str, num_files: int):
         column_type,
         "--page-size-kb",
         "8",
-        "--drop-caches",
         "--concurrency",
         "256",
         "--quiet",
-        "--num-files",
-        str(num_files),
         "--format",
         "lance2-1",
     ]
+
+    args.append("--num-files")
+    if not keep_cache:
+        args.append(str(num_files))
+        args.append("--drop-caches")
+    else:
+        args.append("1")
 
     return args
 
 
 def bench_throughput(
+    keep_cache: bool,
     column_type: str,
     num_files: int,
 ):
-    args = get_bench_args(column_type, num_files)
+    args = get_bench_args(column_type, num_files, keep_cache)
 
     result = subprocess.run(args, capture_output=True)
     if result.returncode != 0:
@@ -64,18 +69,20 @@ def bench_throughput(
 
 
 if __name__ == "__main__":
-    print("encoding,size_bytes,takes_per_second")
-    for encoding in ENCODINGS:
-        for size_idx, size in enumerate(SIZES):
-            shutil.rmtree("/tmp/sizeds", ignore_errors=True)
-            os.mkdir("/tmp/sizeds")
-            column = ""
-            if encoding == "mb":
-                column = f"sized-mini-block{size_idx + 1}"
-            else:
-                column = f"sized-full-zip{size_idx + 1}"
-            takes_per_second = bench_throughput(
-                column,
-                NUM_FILES[size_idx],
-            )
-            print(f"{encoding},{size},{takes_per_second}")
+    print("keep_cache,encoding,size_bytes,takes_per_second")
+    for keep_cache in [True, False]:
+        for encoding in ENCODINGS:
+            for size_idx, size in enumerate(SIZES):
+                shutil.rmtree("/tmp/sizeds", ignore_errors=True)
+                os.mkdir("/tmp/sizeds")
+                column = ""
+                if encoding == "mb":
+                    column = f"sized-mini-block{size_idx + 1}"
+                else:
+                    column = f"sized-full-zip{size_idx + 1}"
+                takes_per_second = bench_throughput(
+                    keep_cache,
+                    column,
+                    NUM_FILES[size_idx],
+                )
+                print(f"{keep_cache},{encoding},{size},{takes_per_second}")

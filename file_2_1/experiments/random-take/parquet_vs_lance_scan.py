@@ -27,8 +27,6 @@ for cat_idx, category in enumerate(categories):
 combined = pd.DataFrame({"category": categories, "score": scores})
 combined = combined.sort_values(by="score", ascending=False)
 
-ax.set_yscale("log")
-ax.yaxis.set_major_locator(matplotlib.ticker.FixedLocator([0.5, 1, 5, 10, 15]))
 
 ax.bar(
     combined["category"],

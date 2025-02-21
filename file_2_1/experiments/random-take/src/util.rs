@@ -114,12 +114,17 @@ impl RandomIndices {
         }
     }
 
-    pub fn next(&self, take_size: usize) -> ScalarBuffer<u64> {
+    pub fn next(&self, take_size: usize, allow_dupes: bool) -> ScalarBuffer<u64> {
         let mut current_index = self.current_index.lock().unwrap();
-        let start = *current_index;
+        let mut start = *current_index;
 
         if take_size + start > self.indices.len() {
-            panic!("Not enough input data for duration.  Would repeat indices");
+            if allow_dupes {
+                start = 0;
+                *current_index = take_size;
+            } else {
+                panic!("Not enough input data for duration.  Would repeat indices");
+            }
         } else {
             *current_index += take_size;
         };

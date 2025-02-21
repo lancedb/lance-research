@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use arrow_array::{types::Float32Type, RecordBatchReader};
 use arrow_schema::{DataType, Field, Fields};
 use lance_datagen::{
-    array::{cycle_vec, rand_list_any, rand_type, rand_varbin},
+    array::{cycle_vec, cycle_vec_var, rand_list_any, rand_type, rand_varbin},
     ArrayGenerator, ArrayGeneratorExt, BatchCount, ByteCount, Dimension, RowCount,
 };
 
@@ -21,9 +21,21 @@ fn nested_array_gen(nesting_level: u32, initial_dim: u32) -> Box<dyn ArrayGenera
     if nesting_level == 0 {
         return gen;
     }
-    gen = cycle_vec(gen, Dimension::from(initial_dim));
+    gen = cycle_vec(gen, Dimension::from(initial_dim)).with_random_nulls(0.1);
     for _ in 1..nesting_level {
-        gen = cycle_vec(gen, Dimension::from(2)).with_random_nulls(0.1);
+        gen = cycle_vec(gen, Dimension::from(1)).with_random_nulls(0.1);
+    }
+    gen
+}
+
+fn nested_list_gen(nesting_level: u32) -> Box<dyn ArrayGenerator> {
+    let mut gen = rand_type(&DataType::Float32);
+    if nesting_level == 0 {
+        return gen;
+    }
+    gen = cycle_vec_var(gen, Dimension::from(1), Dimension::from(2));
+    for _ in 1..nesting_level {
+        gen = cycle_vec_var(gen, Dimension::from(1), Dimension::from(2));
     }
     gen
 }
@@ -46,10 +58,16 @@ fn array_gen_for_type(data_type: DataTypeChoice) -> Box<dyn ArrayGenerator> {
         "lance-encoding:structural-encoding".to_string(),
         "miniblock".to_string(),
     )]);
-    let fz_metadata = HashMap::from_iter(vec![(
-        "lance-encoding:structural-encoding".to_string(),
-        "fullzip".to_string(),
-    )]);
+    let fz_metadata = HashMap::from_iter(vec![
+        (
+            "lance-encoding:structural-encoding".to_string(),
+            "fullzip".to_string(),
+        ),
+        (
+            "lance-encodding:compression".to_string(),
+            "none".to_string(),
+        ),
+    ]);
     let packed_metadata = HashMap::from_iter(vec![
         ("lance-encoding:packed".to_string(), "true".to_string()),
         ("packed".to_string(), "true".to_string()),
@@ -89,11 +107,16 @@ fn array_gen_for_type(data_type: DataTypeChoice) -> Box<dyn ArrayGenerator> {
                 true,
             ))))
         }
-        DataTypeChoice::Nested1 => nested_array_gen(1, 2),
-        DataTypeChoice::Nested2 => nested_array_gen(2, 2),
-        DataTypeChoice::Nested3 => nested_array_gen(3, 2),
-        DataTypeChoice::Nested4 => nested_array_gen(4, 2),
-        DataTypeChoice::Nested5 => nested_array_gen(5, 2),
+        DataTypeChoice::Nested1 => nested_array_gen(1, 8),
+        DataTypeChoice::Nested2 => nested_array_gen(2, 8),
+        DataTypeChoice::Nested3 => nested_array_gen(3, 8),
+        DataTypeChoice::Nested4 => nested_array_gen(4, 8),
+        DataTypeChoice::Nested5 => nested_array_gen(5, 8),
+        DataTypeChoice::NestedList1 => nested_list_gen(1),
+        DataTypeChoice::NestedList2 => nested_list_gen(2),
+        DataTypeChoice::NestedList3 => nested_list_gen(3),
+        DataTypeChoice::NestedList4 => nested_list_gen(4),
+        DataTypeChoice::NestedList5 => nested_list_gen(5),
         DataTypeChoice::Packed2 => packed_array_gen(2).with_metadata(packed_metadata.clone()),
         DataTypeChoice::Packed3 => packed_array_gen(3).with_metadata(packed_metadata.clone()),
         DataTypeChoice::Packed4 => packed_array_gen(4).with_metadata(packed_metadata.clone()),
@@ -102,36 +125,36 @@ fn array_gen_for_type(data_type: DataTypeChoice) -> Box<dyn ArrayGenerator> {
         DataTypeChoice::Unpacked3 => packed_array_gen(3),
         DataTypeChoice::Unpacked4 => packed_array_gen(4),
         DataTypeChoice::Unpacked5 => packed_array_gen(5),
-        DataTypeChoice::SizedMiniBlock1 => {
-            rand_type(&DataType::FixedSizeBinary(32)).with_metadata(mb_metadata.clone())
-        }
-        DataTypeChoice::SizedMiniBlock2 => {
-            rand_type(&DataType::FixedSizeBinary(64)).with_metadata(mb_metadata.clone())
-        }
-        DataTypeChoice::SizedMiniBlock3 => {
-            rand_type(&DataType::FixedSizeBinary(128)).with_metadata(mb_metadata.clone())
-        }
-        DataTypeChoice::SizedMiniBlock4 => {
-            rand_type(&DataType::FixedSizeBinary(256)).with_metadata(mb_metadata.clone())
-        }
-        DataTypeChoice::SizedMiniBlock5 => {
-            rand_type(&DataType::FixedSizeBinary(512)).with_metadata(mb_metadata.clone())
-        }
-        DataTypeChoice::SizedFullZip1 => {
-            rand_type(&DataType::FixedSizeBinary(32)).with_metadata(fz_metadata.clone())
-        }
-        DataTypeChoice::SizedFullZip2 => {
-            rand_type(&DataType::FixedSizeBinary(64)).with_metadata(fz_metadata.clone())
-        }
-        DataTypeChoice::SizedFullZip3 => {
-            rand_type(&DataType::FixedSizeBinary(128)).with_metadata(fz_metadata.clone())
-        }
-        DataTypeChoice::SizedFullZip4 => {
-            rand_type(&DataType::FixedSizeBinary(256)).with_metadata(fz_metadata.clone())
-        }
-        DataTypeChoice::SizedFullZip5 => {
-            rand_type(&DataType::FixedSizeBinary(512)).with_metadata(fz_metadata.clone())
-        }
+        DataTypeChoice::SizedMiniBlock1 => rand_type(&DataType::FixedSizeBinary(1))
+            .with_random_nulls(0.1)
+            .with_metadata(mb_metadata.clone()),
+        DataTypeChoice::SizedMiniBlock2 => rand_type(&DataType::FixedSizeBinary(4))
+            .with_random_nulls(0.1)
+            .with_metadata(mb_metadata.clone()),
+        DataTypeChoice::SizedMiniBlock3 => rand_type(&DataType::FixedSizeBinary(16))
+            .with_random_nulls(0.1)
+            .with_metadata(mb_metadata.clone()),
+        DataTypeChoice::SizedMiniBlock4 => rand_type(&DataType::FixedSizeBinary(64))
+            .with_random_nulls(0.1)
+            .with_metadata(mb_metadata.clone()),
+        DataTypeChoice::SizedMiniBlock5 => rand_type(&DataType::FixedSizeBinary(256))
+            .with_random_nulls(0.1)
+            .with_metadata(mb_metadata.clone()),
+        DataTypeChoice::SizedFullZip1 => rand_type(&DataType::FixedSizeBinary(1))
+            .with_random_nulls(0.1)
+            .with_metadata(fz_metadata.clone()),
+        DataTypeChoice::SizedFullZip2 => rand_type(&DataType::FixedSizeBinary(4))
+            .with_random_nulls(0.1)
+            .with_metadata(fz_metadata.clone()),
+        DataTypeChoice::SizedFullZip3 => rand_type(&DataType::FixedSizeBinary(16))
+            .with_random_nulls(0.1)
+            .with_metadata(fz_metadata.clone()),
+        DataTypeChoice::SizedFullZip4 => rand_type(&DataType::FixedSizeBinary(64))
+            .with_random_nulls(0.1)
+            .with_metadata(fz_metadata.clone()),
+        DataTypeChoice::SizedFullZip5 => rand_type(&DataType::FixedSizeBinary(256))
+            .with_random_nulls(0.1)
+            .with_metadata(fz_metadata.clone()),
     }
 }
 

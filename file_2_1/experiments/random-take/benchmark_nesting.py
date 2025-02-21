@@ -6,13 +6,18 @@ import shutil
 import subprocess
 
 COLUMNS = [
+    "nested-list1",
+    "nested-list2",
+    "nested-list3",
+    "nested-list4",
+    "nested-list5",
     "nested1",
     "nested2",
     "nested3",
     "nested4",
     "nested5",
 ]
-FORMATS = ["parquet", "lance2-0", "lance2-1"]
+FORMATS = ["lance2-0", "lance2-1"]
 
 
 def get_bench_args(
@@ -60,7 +65,7 @@ def bench_throughput(
 
 
 if __name__ == "__main__":
-    print("format,nesting_level,takes_per_second")
+    print("format,nesting_type,nesting_level,takes_per_second")
     for format in FORMATS:
         for column_idx, column in enumerate(COLUMNS):
             shutil.rmtree("/tmp/nesteds", ignore_errors=True)
@@ -69,4 +74,7 @@ if __name__ == "__main__":
                 column,
                 format,
             )
-            print(f"{format},{column_idx+1},{takes_per_second}")
+            nesting_type = "list"
+            if column_idx >= 5:
+                nesting_type = "validity"
+            print(f"{format},{nesting_type},{(column_idx % 5)+1},{takes_per_second}")
