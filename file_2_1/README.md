@@ -5,7 +5,7 @@ This folder contains the code neccessary to reproduce the results in the Lance 2
 - `figures/`: Contains the hand-crafted figures present in the paper.
 - `experiments/`: Contains the code to run the experiments.
 - `results/`: Contains CSV results that we obtained from running the experiments and that were used in the paper.
-- `scripts/`: Contains scripts to generate the figures from the results.
+- `chart-scripts/`: Contains scripts to generate the charts from the results.
 - `data/`: Contains the data used to run the experiments. These data files are large and must be downloaded separately. See the `data/README.md` file for more information.
 
 ## Hardware
