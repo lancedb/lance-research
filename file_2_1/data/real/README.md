@@ -7,7 +7,7 @@ your own research or using these files for other purposes then we recommend obta
 that we list below.
 
 Note: The files are not checked into the Github repository because they are too large. Instead the files have been shared to
-the Open Science Framework. They can be accessed at the following link:
+the Open Science Framework. They can be accessed at the following link: https://osf.io/ju9gs
 
 These files should be downloaded before running any of the full scan experiments. A description of the categories and where
 the data was sourced from can be found below.
