@@ -1,9 +1,13 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
+
+results_dir = Path(__file__).resolve().parent.parent.joinpath("results")
+charts_dir = Path(__file__).resolve().parent.parent.joinpath("charts")
 
 plt.rc("axes", axisbelow=True)
 
-df = pd.read_csv("coalesce.csv")
+df = pd.read_csv(results_dir.joinpath("coalesce.csv"))
 
 fig, ax = plt.subplots()
 fig.set_dpi(150)
@@ -30,5 +34,5 @@ ax.plot(
 
 ax.legend()
 
-plt.savefig("coalesce.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("coalesce.png"), bbox_inches="tight")
 plt.close()

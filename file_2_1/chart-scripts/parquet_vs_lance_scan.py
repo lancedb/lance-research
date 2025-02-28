@@ -1,12 +1,17 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
+
+results_dir = Path(__file__).resolve().parent.parent.joinpath("results")
+charts_dir = Path(__file__).resolve().parent.parent.joinpath("charts")
+
 
 plt.rc("axes", axisbelow=True)
 
-dfpq = pd.read_csv("parquet_full_scan.csv")
+dfpq = pd.read_csv(results_dir.joinpath("parquet_full_scan.csv"))
 pq_page_sizes = dfpq["page_size_kb"].unique().tolist()
 categories = dfpq["category"].unique().tolist()
-dflance = pd.read_csv("lance_full_scan.csv")
+dflance = pd.read_csv(results_dir.joinpath("lance_full_scan.csv"))
 
 fig, ax = plt.subplots()
 
@@ -42,5 +47,5 @@ ax.plot(
 
 ax.tick_params(axis="x", labelrotation=90)
 
-plt.savefig("pq_v_lance_scan.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("pq_v_lance_scan.png"), bbox_inches="tight")
 plt.close()

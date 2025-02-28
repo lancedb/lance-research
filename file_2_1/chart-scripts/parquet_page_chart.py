@@ -1,12 +1,17 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker
+from pathlib import Path
+
+results_dir = Path(__file__).resolve().parent.parent.joinpath("results")
+charts_dir = Path(__file__).resolve().parent.parent.joinpath("charts")
+
 
 plt.rc("axes", axisbelow=True)
 
 MAX_TAKE = 256
 
-df = pd.read_csv("take_parquet.csv")
+df = pd.read_csv(results_dir.joinpath("take_parquet.csv"))
 page_sizes = df["page_size_kb"].unique().tolist()
 datatypes = df["column"].unique().tolist()
 
@@ -35,7 +40,7 @@ for dt_idx, datatype in enumerate(datatypes):
         label=datatype,
     )
 
-baseline = pd.read_csv("baseline.csv")
+baseline = pd.read_csv(results_dir.joinpath("baseline.csv"))
 
 # Remove the 4KB row to align with tests
 baseline = baseline.drop(0)
@@ -50,5 +55,5 @@ ax.plot(
 
 ax.legend()
 
-plt.savefig("parquet_page.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("parquet_page.png"), bbox_inches="tight")
 plt.close()

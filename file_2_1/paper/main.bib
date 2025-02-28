@@ -1,0 +1,593 @@
+
+% Journals
+
+% First the Full Name is given, then the abbreviation used in the AMS Math
+% Reviews, with an indication if it could not be found there.
+% Note the 2nd overwrites the 1st, so swap them if you want the full name.
+
+ %{AMS}
+ @String{AMSTrans = "American Mathematical Society Translations" }
+ @String{AMSTrans = "Amer. Math. Soc. Transl." }
+ @String{BullAMS = "Bulletin of the American Mathematical Society" }
+ @String{BullAMS = "Bull. Amer. Math. Soc." }
+ @String{ProcAMS = "Proceedings of the American Mathematical Society" }
+ @String{ProcAMS = "Proc. Amer. Math. Soc." }
+ @String{TransAMS = "Transactions of the American Mathematical Society" }
+ @String{TransAMS = "Trans. Amer. Math. Soc." }
+
+ %ACM
+ @String{CACM = "Communications of the {ACM}" }
+ @String{CACM = "Commun. {ACM}" }
+ @String{CompServ = "Comput. Surveys" }
+ @String{JACM = "J. ACM" }
+ @String{ACMMathSoft = "{ACM} Transactions on Mathematical Software" }
+ @String{ACMMathSoft = "{ACM} Trans. Math. Software" }
+ @String{SIGNUM = "{ACM} {SIGNUM} Newsletter" }
+ @String{SIGNUM = "{ACM} {SIGNUM} Newslett." }
+
+ @String{AmerSocio = "American Journal of Sociology" }
+ @String{AmerStatAssoc = "Journal of the American Statistical Association" }
+ @String{AmerStatAssoc = "J. Amer. Statist. Assoc." }
+ @String{ApplMathComp = "Applied Mathematics and Computation" }
+ @String{ApplMathComp = "Appl. Math. Comput." }
+ @String{AmerMathMonthly = "American Mathematical Monthly" }
+ @String{AmerMathMonthly = "Amer. Math. Monthly" }
+ @String{BIT = "{BIT}" }
+ @String{BritStatPsych = "British Journal of Mathematical and Statistical
+          Psychology" }
+ @String{BritStatPsych = "Brit. J. Math. Statist. Psych." }
+ @String{CanMathBull = "Canadian Mathematical Bulletin" }
+ @String{CanMathBull = "Canad. Math. Bull." }
+ @String{CompApplMath = "Journal of Computational and Applied Mathematics" }
+ @String{CompApplMath = "J. Comput. Appl. Math." }
+ @String{CompPhys = "Journal of Computational Physics" }
+ @String{CompPhys = "J. Comput. Phys." }
+ @String{CompStruct = "Computers and Structures" }
+ @String{CompStruct = "Comput. \& Structures" }
+ @String{CompJour = "The Computer Journal" }
+ @String{CompJour = "Comput. J." }
+ @String{CompSysSci = "Journal of Computer and System Sciences" }
+ @String{CompSysSci = "J. Comput. System Sci." }
+ @String{Computing = "Computing" }
+ @String{ContempMath = "Contemporary Mathematics" }
+ @String{ContempMath = "Contemp. Math." }
+ @String{Crelle = "Crelle's Journal" }
+ @String{GiornaleMath = "Giornale di Mathematiche" }
+ @String{GiornaleMath = "Giorn. Mat." } % didn't find in AMS MR., ibid.
+
+ %IEEE
+ @String{Computer = "{IEEE} Computer" }
+ @String{IEEETransComp = "{IEEE} Transactions on Computers" }
+ @String{IEEETransComp = "{IEEE} Trans. Comput." }
+ @String{IEEETransAC = "{IEEE} Transactions on Automatic Control" }
+ @String{IEEETransAC = "{IEEE} Trans. Automat. Control" }
+ @String{IEEESpec = "{IEEE} Spectrum" } % didn't find in AMS MR
+ @String{ProcIEEE = "Proceedings of the {IEEE}" }
+ @String{ProcIEEE = "Proc. {IEEE}" } % didn't find in AMS MR
+ @String{IEEETransAeroElec = "{IEEE} Transactions on Aerospace and Electronic
+     Systems" }
+ @String{IEEETransAeroElec = "{IEEE} Trans. Aerospace Electron. Systems" }
+
+ @String{IMANumerAna = "{IMA} Journal of Numerical Analysis" }
+ @String{IMANumerAna = "{IMA} J. Numer. Anal." }
+ @String{InfProcLet = "Information Processing Letters" }
+ @String{InfProcLet = "Inform. Process. Lett." }
+ @String{InstMathApp = "Journal of the Institute of Mathematics and
+     its Applications" }
+ @String{InstMathApp = "J. Inst. Math. Appl." }
+ @String{IntControl = "International Journal of Control" }
+ @String{IntControl = "Internat. J. Control" }
+ @String{IntNumerEng = "International Journal for Numerical Methods in
+     Engineering" }
+ @String{IntNumerEng = "Internat. J. Numer. Methods Engrg." }
+ @String{IntSuper = "International Journal of Supercomputing Applications" }
+ @String{IntSuper = "Internat. J. Supercomputing Applic." } % didn't find
+%% in AMS MR
+ @String{Kibernetika = "Kibernetika" }
+ @String{JResNatBurStand = "Journal of Research of the National Bureau
+     of Standards" }
+ @String{JResNatBurStand = "J. Res. Nat. Bur. Standards" }
+ @String{LinAlgApp = "Linear Algebra and its Applications" }
+ @String{LinAlgApp = "Linear Algebra Appl." }
+ @String{MathAnaAppl = "Journal of Mathematical Analysis and Applications" }
+ @String{MathAnaAppl = "J. Math. Anal. Appl." }
+ @String{MathAnnalen = "Mathematische Annalen" }
+ @String{MathAnnalen = "Math. Ann." }
+ @String{MathPhys = "Journal of Mathematical Physics" }
+ @String{MathPhys = "J. Math. Phys." }
+ @String{MathComp = "Mathematics of Computation" }
+ @String{MathComp = "Math. Comp." }
+ @String{MathScand = "Mathematica Scandinavica" }
+ @String{MathScand = "Math. Scand." }
+ @String{TablesAidsComp = "Mathematical Tables and Other Aids to Computation" }
+ @String{TablesAidsComp = "Math. Tables Aids Comput." }
+ @String{NumerMath = "Numerische Mathematik" }
+ @String{NumerMath = "Numer. Math." }
+ @String{PacificMath = "Pacific Journal of Mathematics" }
+ @String{PacificMath = "Pacific J. Math." }
+ @String{ParDistComp = "Journal of Parallel and Distributed Computing" }
+ @String{ParDistComp = "J. Parallel and Distrib. Comput." } % didn't find
+%% in AMS MR
+ @String{ParComputing = "Parallel Computing" }
+ @String{ParComputing = "Parallel Comput." }
+ @String{PhilMag = "Philosophical Magazine" }
+ @String{PhilMag = "Philos. Mag." }
+ @String{ProcNAS = "Proceedings of the National Academy of Sciences
+                    of the USA" }
+ @String{ProcNAS = "Proc. Nat. Acad. Sci. U. S. A." }
+ @String{Psychometrika = "Psychometrika" }
+ @String{QuartMath = "Quarterly Journal of Mathematics, Oxford, Series (2)" }
+ @String{QuartMath = "Quart. J. Math. Oxford Ser. (2)" }
+ @String{QuartApplMath = "Quarterly of Applied Mathematics" }
+ @String{QuartApplMath = "Quart. Appl. Math." }
+ @String{RevueInstStat = "Review of the International Statisical Institute" }
+ @String{RevueInstStat = "Rev. Inst. Internat. Statist." }
+
+ %SIAM
+ @String{JSIAM = "Journal of the Society for Industrial and Applied
+     Mathematics" }
+ @String{JSIAM = "J. Soc. Indust. Appl. Math." }
+ @String{JSIAMB = "Journal of the Society for Industrial and Applied
+     Mathematics, Series B, Numerical Analysis" }
+ @String{JSIAMB = "J. Soc. Indust. Appl. Math. Ser. B Numer. Anal." }
+ @String{SIAMAlgMeth = "{SIAM} Journal on Algebraic and Discrete Methods" }
+ @String{SIAMAlgMeth = "{SIAM} J. Algebraic Discrete Methods" }
+ @String{SIAMAppMath = "{SIAM} Journal on Applied Mathematics" }
+ @String{SIAMAppMath = "{SIAM} J. Appl. Math." }
+ @String{SIAMComp = "{SIAM} Journal on Computing" }
+ @String{SIAMComp = "{SIAM} J. Comput." }
+ @String{SIAMMatrix = "{SIAM} Journal on Matrix Analysis and Applications" }
+ @String{SIAMMatrix = "{SIAM} J. Matrix Anal. Appl." }
+ @String{SIAMNumAnal = "{SIAM} Journal on Numerical Analysis" }
+ @String{SIAMNumAnal = "{SIAM} J. Numer. Anal." }
+ @String{SIAMReview = "{SIAM} Review" }
+ @String{SIAMReview = "{SIAM} Rev." }
+ @String{SIAMSciStat = "{SIAM} Journal on Scientific and Statistical
+     Computing" }
+ @String{SIAMSciStat = "{SIAM} J. Sci. Statist. Comput." }
+
+ @String{SoftPracExp = "Software Practice and Experience" }
+ @String{SoftPracExp = "Software Prac. Experience" } % didn't find in AMS MR
+ @String{StatScience = "Statistical Science" }
+ @String{StatScience = "Statist. Sci." }
+ @String{Techno = "Technometrics" }
+ @String{USSRCompMathPhys = "{USSR} Computational Mathematics and Mathematical
+     Physics" }
+ @String{USSRCompMathPhys = "{U. S. S. R.} Comput. Math. and Math. Phys." }
+ @String{VLSICompSys = "Journal of {VLSI} and Computer Systems" }
+ @String{VLSICompSys = "J. {VLSI} Comput. Syst." }
+ @String{ZAngewMathMech = "Zeitschrift fur Angewandte Mathematik und
+     Mechanik" }
+ @String{ZAngewMathMech = "Z. Angew. Math. Mech." }
+ @String{ZAngewMathPhys = "Zeitschrift fur Angewandte Mathematik und Physik" }
+ @String{ZAngewMathPhys = "Z. Angew. Math. Phys." }
+
+% Publishers % ================================================= |
+
+ @String{Academic = "Academic Press" }
+ @String{ACMPress = "{ACM} Press" }
+ @String{AdamHilger = "Adam Hilger" }
+ @String{AddisonWesley = "Addison-Wesley" }
+ @String{AllynBacon = "Allyn and Bacon" }
+ @String{AMS = "American Mathematical Society" }
+ @String{Birkhauser = "Birkha{\"u}ser" }
+ @String{CambridgePress = "Cambridge University Press" }
+ @String{Chelsea = "Chelsea" }
+ @String{ClaredonPress = "Claredon Press" }
+ @String{DoverPub = "Dover Publications" }
+ @String{Eyolles = "Eyolles" }
+ @String{HoltRinehartWinston = "Holt, Rinehart and Winston" }
+ @String{Interscience = "Interscience" }
+ @String{JohnsHopkinsPress = "The Johns Hopkins University Press" }
+ @String{JohnWileySons = "John Wiley and Sons" }
+ @String{Macmillan = "Macmillan" }
+ @String{MathWorks = "The Math Works Inc." }
+ @String{McGrawHill = "McGraw-Hill" }
+ @String{NatBurStd = "National Bureau of Standards" }
+ @String{NorthHolland = "North-Holland" }
+ @String{OxfordPress = "Oxford University Press" }  %address Oxford or London?
+ @String{PergamonPress = "Pergamon Press" }
+ @String{PlenumPress = "Plenum Press" }
+ @String{PrenticeHall = "Prentice-Hall" }
+ @String{SIAMPub = "{SIAM} Publications" }
+ @String{Springer = "Springer-Verlag" }
+ @String{TexasPress = "University of Texas Press" }
+ @String{VanNostrand = "Van Nostrand" }
+ @String{WHFreeman = "W. H. Freeman and Co." }
+
+%Entries
+
+@inproceedings{DataHouseReview,
+  author={Harby, Ahmed A. and Zulkernine, Farhana},
+  booktitle={2022 IEEE International Conference on Big Data (Big Data)}, 
+  title={From Data Warehouse to Lakehouse: A Comparative Review}, 
+  year={2022},
+  volume={},
+  number={},
+  pages={389-395},
+  keywords={Distributed databases;Data warehouses;Big Data applications;Data mining;Information systems;Big data;Data Warehouse;Data Lake;Data Lakehouse},
+  doi={10.1109/BigData55660.2022.10020719}}
+
+@inproceedings{ColumnStores06,
+author = {Abadi, Daniel and Madden, Samuel and Ferreira, Miguel},
+title = {Integrating compression and execution in column-oriented database systems},
+year = {2006},
+isbn = {1595934340},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/1142473.1142548},
+doi = {10.1145/1142473.1142548},
+booktitle = {Proceedings of the 2006 ACM SIGMOD International Conference on Management of Data},
+pages = {671–682},
+numpages = {12},
+keywords = {column-oriented databases, column-stores, database compression, query execution},
+location = {Chicago, IL, USA},
+series = {SIGMOD '06}
+}
+
+@article{CloudStorage,
+author = {Durner, Dominik and Leis, Viktor and Neumann, Thomas},
+title = {Exploiting Cloud Object Storage for High-Performance Analytics},
+year = {2023},
+issue_date = {July 2023},
+publisher = {VLDB Endowment},
+volume = {16},
+number = {11},
+issn = {2150-8097},
+url = {https://doi.org/10.14778/3611479.3611486},
+doi = {10.14778/3611479.3611486},
+journal = {Proc. VLDB Endow.},
+month = jul,
+pages = {2769–2782},
+numpages = {14}
+}
+
+@inproceedings{Bullion,
+  title={Bullion: A Column Store for Machine Learning},
+  author={Liao, Gang and Liu, Ye and Chen, Jianjun and Abadi, Daniel J},
+  booktitle={Proceedings of The Biennial Conference on Innovative Data Systems Research (CIDR)},
+  year={2025},
+  pages={},
+}
+
+@inproceedings{NvmeCaching,
+  title={The Five-Minute Rule for the Cloud: Caching in Analytics Systems},
+  author={Duwe, Kira and Anadiotis, Angelos and Lamb, Andrew and Lersch, Lucas and Leskes, Boaz and Ritter, Daniel and Tözün, Pınar},
+  booktitle={Proceedings of The Biennial Conference on Innovative Data Systems Research (CIDR)},
+  year={2025},
+  pages={},
+}
+
+@techreport{WekaFs,
+  title={WekaFS Architecture White Paper},
+  author={Zvibel, Liran and Hiatt, David and Murphy, Barbara},
+  institution={Experis Technology Group},
+  year={2021},
+}
+
+@unpublished{Rottnest,
+  author = "Wang, Ziheng and Krassovsky, Sasha and Kennedy, Conor and Aiken, Alex and Pace, Weston and Jiang, Rain and Zhang, Huayi and Jiang, Chenyu and Xu, Wei",
+  title  = "Rottnest: Indexing Data Lakes for Search",
+  note   = "submitted for publication",
+  month  = "",
+  year   = "2025",
+  annote = ""
+}
+
+@article{ColumnarEvaluation,
+author = {Zeng, Xinyu and Hui, Yulong and Shen, Jiahong and Pavlo, Andrew and McKinney, Wes and Zhang, Huanchen},
+title = {An Empirical Evaluation of Columnar Storage Formats},
+year = {2023},
+issue_date = {October 2023},
+publisher = {VLDB Endowment},
+volume = {17},
+number = {2},
+issn = {2150-8097},
+url = {https://doi.org/10.14778/3626292.3626298},
+doi = {10.14778/3626292.3626298},
+journal = {Proc. VLDB Endow.},
+month = oct,
+pages = {148–161},
+numpages = {14}
+}
+
+
+@online{S3PerformanceGuidelines,
+  author = "AWS",
+  title = "Best practices design patterns: optimizing Amazon S3 performance",
+  url = "https://docs.aws.amazon.com/AmazonS3/latest/userguide/optimizing-performance.html",
+  organization = "Amazon",
+  lastaccessed = "February 19, 2024",
+}
+
+@online{JuiceFs,
+  author = "Juicedata",
+  year = "",
+  month = "",
+  title = "JuiceFS: A High-Performance, Cloud-Native, Distributed File System",
+  url = "https://juicefs.com",
+  organization = "Juicedata",
+  lastaccessed = "February 21, 2024",
+}
+
+@online{Parquet,
+  author = "Apache Software Foundation",
+  year = "",
+  month = "",
+  title = "Apache Parquet",
+  url = "https://parquet.apache.org/",
+  lastaccessed = "February 21, 2024",
+}
+
+@online{Orc,
+  author = "Apache Software Foundation",
+  year = "",
+  month = "",
+  title = {Apache ORC},
+  url = "https://orc.apache.org/",
+  lastaccessed = "February 26, 2024"
+}
+
+@online{Lance2,
+  author = {LanceDB},
+  year = {2024},
+  month = apr,
+  title = {Lance v2: A columnar container format for modern data},
+  url = {https://blog.lancedb.com/lance-v2/},
+  organization = {LanceDB},
+  lastaccessed = {February 19, 2024}
+}
+
+@online{Nimble,
+  author = {Meta Platforms},
+  year = "",
+  month = "",
+  title = {The Nimble File Format},
+  url = {https://github.com/facebookincubator/nimble},
+  organization = {Meta Platforms},
+  lastaccessed = {February 26, 2024}
+}
+
+@online{Vortex,
+  author = {Spiral},
+  year = "",
+  month = "",
+  title = {Vortex},
+  url = {https://github.com/spiraldb/vortex},
+  organization = {Spiral},
+  lastaccessedd = {February 26, 2024}
+}
+
+@online{PqPageOffset,
+  author = {Andrew Lamb and Raphael Taylor-Davies},
+  year = {2022},
+  title = {Querying Parquet with Millisecond Latency},
+  url = {https://arrow.apache.org/blog/2022/12/26/querying-parquet-with-millisecond-latency/},
+  lastaccessed = {February 19, 2024}
+}
+
+@online{ArrowFile,
+  author = {Apache Software Foundation},
+  year = "",
+  month = "",
+  title = "Arrow Columnar Format",
+  url = "https://arrow.apache.org/docs/format/Columnar.html",
+  lastaccessed = "February 21, 2024",
+}
+
+@online{TakaraImages,
+  author = {Frontier Research Team},
+  year = "2025",
+  title = "image\_captions",
+  lastaccessed = "February 20, 2024",
+  url = "https://huggingface.co/datasets/takara-ai/image_captions",
+  organization = {Takara.ai}
+}
+
+@dataset{BabyNames,
+  author = {U.S. Census Bureau},
+  year = 2021,
+  title = "Popular Baby Names",
+  url = "https://www.ssa.gov/oact/babynames/limits.html",
+  lastaccessed = "February 20, 2024",
+}
+
+@dataset{GithubCode,
+  author = {GitHub},
+  year = 2021,
+  title = "Github Activity Data",
+  url = "https://github.blog/news-insights/research/making-open-source-data-more-available/",
+  lastaccessed = "February 27, 2024",
+}
+
+@article{UltraChat,
+  title={Enhancing Chat Language Models by Scaling High-quality Instructional Conversations},
+  author={Ding, Ning and Chen, Yulin and Xu, Bokai and Qin, Yujia and Zheng, Zhi and Hu, Shengding and Liu, Zhiyuan and Sun, Maosong and Zhou, Bowen},
+  journal={arXiv preprint arXiv:2305.14233},
+  year={2023}
+}
+
+@inproceedings{Laion5b,
+author = {Schuhmann, Christoph and Beaumont, Romain and Vencu, Richard and Gordon, Cade and Wightman, Ross and Cherti, Mehdi and Coombes, Theo and Katta, Aarush and Mullis, Clayton and Wortsman, Mitchell and Schramowski, Patrick and Kundurthy, Srivatsa and Crowson, Katherine and Schmidt, Ludwig and Kaczmarczyk, Robert and Jitsev, Jenia},
+title = {LAION-5B: an open large-scale dataset for training next generation image-text models},
+year = {2022},
+isbn = {9781713871088},
+publisher = {Curran Associates Inc.},
+address = {Red Hook, NY, USA},
+booktitle = {Proceedings of the 36th International Conference on Neural Information Processing Systems},
+articleno = {1833},
+numpages = {17},
+location = {New Orleans, LA, USA},
+series = {NIPS '22}
+}
+
+@dataset{CommonCrawl,
+  author = {Common Crawl},
+  year = 2025,
+  title = "Common Crawl - Open Repository of Web Crawl Data",
+  url = "https://commoncrawl.org/",
+  lastaccessed = "February 20, 2024",
+}
+
+@inproceedings{AmazonReviews,
+author = {McAuley, Julian John and Leskovec, Jure},
+title = {From amateurs to connoisseurs: modeling the evolution of user expertise through online reviews},
+year = {2013},
+isbn = {9781450320351},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/2488388.2488466},
+doi = {10.1145/2488388.2488466},
+booktitle = {Proceedings of the 22nd International Conference on World Wide Web},
+pages = {897–908},
+numpages = {12},
+keywords = {expertise, recommender systems, user modeling},
+location = {Rio de Janeiro, Brazil},
+series = {WWW '13}
+}
+
+@article{ComposableData,
+author = {Pedreira, Pedro and Erling, Orri and Karanasos, Konstantinos and Schneider, Scott and McKinney, Wes and Valluri, Satya R and Zait, Mohamed and Nadeau, Jacques},
+title = {The Composable Data Management System Manifesto},
+year = {2023},
+issue_date = {June 2023},
+publisher = {VLDB Endowment},
+volume = {16},
+number = {10},
+issn = {2150-8097},
+url = {https://doi.org/10.14778/3603581.3603604},
+doi = {10.14778/3603581.3603604},
+journal = {Proc. VLDB Endow.},
+month = jun,
+pages = {2679–2685},
+numpages = {7}
+}
+
+@inproceedings{DecomposeFileFormat,
+   author = {Prammer, Martin and Zeng, Xinyu and Meng, Ruijun and McKinney, Wes and Zhang, Huanchen and Pavlo, Andrew and Patel, Jignesh},
+   title = {{Towards Functional Decomposition of Storage Formats}},
+   booktitle = {{CIDR} 2025, Conference on Innovative Data Systems Research},
+   year = {2025},
+   url = {https://db.cs.cmu.edu/papers/2025/p19-prammer.pdf},
+ }
+
+@article{Dremel,
+author = {Melnik, Sergey and Gubarev, Andrey and Long, Jing Jing and Romer, Geoffrey and Shivakumar, Shiva and Tolton, Matt and Vassilakis, Theo},
+title = {Dremel: interactive analysis of web-scale datasets},
+year = {2010},
+issue_date = {September 2010},
+publisher = {VLDB Endowment},
+volume = {3},
+number = {1–2},
+issn = {2150-8097},
+url = {https://doi.org/10.14778/1920841.1920886},
+doi = {10.14778/1920841.1920886},
+journal = {Proc. VLDB Endow.},
+month = sep,
+pages = {330–339},
+numpages = {10}
+}
+@inproceedings{PredicateCaching,
+author = {Schmidt, Tobias and Kipf, Andreas and Horn, Dominik and Saxena, Gaurav and Kraska, Tim},
+title = {Predicate Caching: Query-Driven Secondary Indexing for Cloud Data Warehouses},
+year = {2024},
+isbn = {9798400704222},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3626246.3653395},
+doi = {10.1145/3626246.3653395},
+booktitle = {Companion of the 2024 International Conference on Management of Data},
+pages = {347–359},
+numpages = {13},
+keywords = {analytical database, data warehouses, indexing, predicate caching},
+location = {Santiago AA, Chile},
+series = {SIGMOD/PODS '24}
+}
+
+@article{FastLanes,
+author = {Afroozeh, Azim and Boncz, Peter},
+title = {The FastLanes Compression Layout: Decoding > 100 Billion Integers per Second with Scalar Code},
+year = {2023},
+issue_date = {May 2023},
+publisher = {VLDB Endowment},
+volume = {16},
+number = {9},
+issn = {2150-8097},
+url = {https://doi.org/10.14778/3598581.3598587},
+doi = {10.14778/3598581.3598587},
+journal = {Proc. VLDB Endow.},
+month = may,
+pages = {2132–2144},
+numpages = {13}
+}
+
+@article{Alp,
+author = {Afroozeh, Azim and Kuffo, Leonardo X. and Boncz, Peter},
+title = {ALP: Adaptive Lossless floating-Point Compression},
+year = {2023},
+issue_date = {December 2023},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+volume = {1},
+number = {4},
+url = {https://doi.org/10.1145/3626717},
+doi = {10.1145/3626717},
+journal = {Proc. ACM Manag. Data},
+month = dec,
+articleno = {230},
+numpages = {26},
+keywords = {big data formats, columnar storage, floating point compression, lightweight compression, lossless compression, vectorized execution}
+}
+
+@article{BtrBlocks,
+author = {Kuschewski, Maximilian and Sauerwein, David and Alhomssi, Adnan and Leis, Viktor},
+title = {BtrBlocks: Efficient Columnar Compression for Data Lakes},
+year = {2023},
+issue_date = {June 2023},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+volume = {1},
+number = {2},
+url = {https://doi.org/10.1145/3589263},
+doi = {10.1145/3589263},
+journal = {Proc. ACM Manag. Data},
+month = jun,
+articleno = {118},
+numpages = {26},
+keywords = {columnar storage, compression, data lake, query processing}
+}
+
+@article{Procella,
+author = {Chattopadhyay, Biswapesh and Dutta, Priyam and Liu, Weiran and Tinn, Ott and Mccormick, Andrew and Mokashi, Aniket and Harvey, Paul and Gonzalez, Hector and Lomax, David and Mittal, Sagar and Ebenstein, Roee and Mikhaylin, Nikita and Lee, Hung-ching and Zhao, Xiaoyan and Xu, Tony and Perez, Luis and Shahmohammadi, Farhad and Bui, Tran and McKay, Neil and Aya, Selcuk and Lychagina, Vera and Elliott, Brett},
+title = {Procella: unifying serving and analytical data at YouTube},
+year = {2019},
+issue_date = {August 2019},
+publisher = {VLDB Endowment},
+volume = {12},
+number = {12},
+issn = {2150-8097},
+url = {https://doi.org/10.14778/3352063.3352121},
+doi = {10.14778/3352063.3352121},
+journal = {Proc. VLDB Endow.},
+month = aug,
+pages = {2022–2034},
+numpages = {13}
+}
+
+@inproceedings{Datafusion,
+author = {Lamb, Andrew and Shen, Yijie and Heres, Dani\"{e}l and Chakraborty, Jayjeet and Kabak, Mehmet Ozan and Hsieh, Liang-Chi and Sun, Chao},
+title = {Apache Arrow DataFusion: A Fast, Embeddable, Modular Analytic Query Engine},
+year = {2024},
+isbn = {9798400704222},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3626246.3653368},
+doi = {10.1145/3626246.3653368},
+booktitle = {Companion of the 2024 International Conference on Management of Data},
+pages = {5–17},
+numpages = {13},
+keywords = {api design, column stores, database systems, modular query engines, olap, parallel execution, vectorized execution},
+location = {Santiago AA, Chile},
+series = {SIGMOD/PODS '24}
+}
+

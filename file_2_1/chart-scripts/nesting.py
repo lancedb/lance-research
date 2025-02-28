@@ -1,10 +1,14 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker
+from pathlib import Path
+
+results_dir = Path(__file__).resolve().parent.parent.joinpath("results")
+charts_dir = Path(__file__).resolve().parent.parent.joinpath("charts")
 
 plt.rc("axes", axisbelow=True)
 
-df = pd.read_csv("nesting.csv")
+df = pd.read_csv(results_dir.joinpath("nesting.csv"))
 fmts = df["format"].unique().tolist()
 
 fmt_names = {
@@ -33,7 +37,7 @@ for fmt in fmts:
         label=fmt_names[fmt],
     )
 
-dfs3 = pd.read_csv("nesting_s3.csv")
+dfs3 = pd.read_csv(results_dir.joinpath("nesting_s3.csv"))
 
 ax = axes[1]
 ax.set_ylim([0, 13_000])
@@ -68,5 +72,5 @@ for fmt in fmts:
     )
 
 plt.subplots_adjust(wspace=0.5)
-plt.savefig("nesting.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("nesting.png"), bbox_inches="tight")
 plt.close()

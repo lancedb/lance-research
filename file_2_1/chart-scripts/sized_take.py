@@ -1,10 +1,15 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker
+from pathlib import Path
+
+results_dir = Path(__file__).resolve().parent.parent.joinpath("results")
+charts_dir = Path(__file__).resolve().parent.parent.joinpath("charts")
+
 
 plt.rc("axes", axisbelow=True)
 
-df = pd.read_csv("sized.csv")
+df = pd.read_csv(results_dir.joinpath("sized.csv"))
 
 fig, ax = plt.subplots()
 
@@ -64,5 +69,5 @@ lines, labels = ax.get_legend_handles_labels()
 lines2, labels2 = ax2.get_legend_handles_labels()
 ax2.legend(lines + lines2, labels + labels2, loc=0)
 
-plt.savefig("sized_take.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("sized_take.png"), bbox_inches="tight")
 plt.close()

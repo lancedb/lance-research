@@ -1,10 +1,15 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker
+from pathlib import Path
+
+results_dir = Path(__file__).resolve().parent.parent.joinpath("results")
+charts_dir = Path(__file__).resolve().parent.parent.joinpath("charts")
+
 
 plt.rc("axes", axisbelow=True)
 
-df = pd.read_csv("parquet_full_scan.csv")
+df = pd.read_csv(results_dir.joinpath("parquet_full_scan.csv"))
 page_sizes = df["page_size_kb"].unique().tolist()
 categories = df["category"].unique().tolist()
 
@@ -61,5 +66,5 @@ for cat_idx, category in enumerate(categories):
 
 # ax.legend()
 
-plt.savefig("parquet_scan_page.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("parquet_scan_page.png"), bbox_inches="tight")
 plt.close()

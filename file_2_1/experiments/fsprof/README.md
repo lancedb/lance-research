@@ -14,7 +14,7 @@ We construct the S3 object store using `AmazonS3Builder::from_env()` and so you 
 ensure the credentials are accessible in the environment.
 
 Specifically, we used IAM profiles assigned to an EC2 instance for authorization. S3 results
-and S3 express results were generated on a c7gn.8xlarge instance.
+were generated on a c7gn.8xlarge instance.
 
 ## Running the experiment
 
@@ -48,9 +48,3 @@ on how these results were generated.
 
 - The NVMe results were generated on a local desktop with a Samsung 970 EVO Plus 2TB drive.
 - The S3 results were generated on a c7gn.8xlarge instance
-- The S3 express results were generated on a c7gn.8xlarge instance
-- The S3 express results required modifying the `s3` script to add the `with_s3_express(true)` call
-  and changing the bucket name. We renamed the results file to `s3_express_results.csv` to avoid
-  overwriting the original results.
-- The HDD results were generated on a local desktop with a an ancient WDC WD10EZEX-08W.
-- The HDD results were renamed to `hdd_results.csv` to avoid overwriting the original results.

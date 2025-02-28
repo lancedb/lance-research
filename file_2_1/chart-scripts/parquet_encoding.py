@@ -1,9 +1,14 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
+
+results_dir = Path(__file__).resolve().parent.parent.joinpath("results")
+charts_dir = Path(__file__).resolve().parent.parent.joinpath("charts")
+
 
 plt.rc("axes", axisbelow=True)
 
-df = pd.read_csv("parquet_encoding.csv")
+df = pd.read_csv(results_dir.joinpath("parquet_encoding.csv"))
 
 print(df)
 
@@ -28,5 +33,5 @@ ax.bar(
 
 ax.tick_params(axis="x", labelrotation=90)
 
-plt.savefig("parquet_encoding.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("parquet_encoding.png"), bbox_inches="tight")
 plt.close()

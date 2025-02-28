@@ -1,12 +1,16 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker
+from pathlib import Path
+
+results_dir = Path(__file__).resolve().parent.parent.joinpath("results")
+charts_dir = Path(__file__).resolve().parent.parent.joinpath("charts")
 
 plt.rc("axes", axisbelow=True)
 
 configs = [
-    ("disk_results.csv", "NVMe", 64, "center right"),
-    ("s3_results.csv", "S3", 512, "center left"),
+    ("fsprof_disk_results.csv", "NVMe", 64, "center right"),
+    ("fsprof_s3_results.csv", "S3", 512, "center left"),
 ]
 
 
@@ -30,7 +34,7 @@ for i, (filename, label, num_threads, loc) in enumerate(configs):
         matplotlib.ticker.ScalarFormatter(useOffset=False, useMathText=True)
     )
 
-    df = pd.read_csv(filename)
+    df = pd.read_csv(results_dir.joinpath(filename))
     filtered_df = df[df["num_threads"] == num_threads]
     read_size = filtered_df["read_size_sectors"] * 4096
 
@@ -61,5 +65,5 @@ for i, (filename, label, num_threads, loc) in enumerate(configs):
         ax2.legend(lines + lines2, labels + labels2, loc=loc)
 
 plt.subplots_adjust(hspace=0.6)
-plt.savefig("disk_perf.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("disk_perf.png"), bbox_inches="tight")
 plt.close()

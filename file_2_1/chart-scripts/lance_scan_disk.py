@@ -2,6 +2,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker
+from pathlib import Path
+
+results_dir = Path(__file__).resolve().parent.parent.joinpath("results")
+charts_dir = Path(__file__).resolve().parent.parent.joinpath("charts")
 
 plt.rc("axes", axisbelow=True)
 
@@ -17,7 +21,7 @@ categories = [
 ]
 
 # Parquet
-pqdf = pd.read_csv("parquet_full_scan.csv")
+pqdf = pd.read_csv(results_dir.joinpath("parquet_full_scan.csv"))
 pqbests = []
 for category in categories:
     filtered = pqdf[pqdf["category"] == category]
@@ -29,7 +33,7 @@ for category in categories:
 pqdf = pd.DataFrame({"category": categories, "best": pqbests})
 
 # Lance
-df = pd.read_csv("lance_full_scan.csv")
+df = pd.read_csv(results_dir.joinpath("lance_full_scan.csv"))
 
 fig, ax = plt.subplots()
 
@@ -75,5 +79,5 @@ ax.set_xticks(x + (width / 2), categories)
 
 ax.legend(loc="upper right")
 
-plt.savefig("lance_scan_disk.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("lance_scan_disk.png"), bbox_inches="tight")
 plt.close()

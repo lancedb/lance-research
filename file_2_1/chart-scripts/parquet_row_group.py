@@ -2,10 +2,15 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker
+from pathlib import Path
+
+results_dir = Path(__file__).resolve().parent.parent.joinpath("results")
+charts_dir = Path(__file__).resolve().parent.parent.joinpath("charts")
+
 
 plt.rc("axes", axisbelow=True)
 
-df = pd.read_csv("parquet_full_scan.csv")
+df = pd.read_csv(results_dir.joinpath("parquet_full_scan.csv"))
 page_sizes = df["page_size_kb"].unique().tolist()
 row_group_sizes = df["row_group_size"].unique().tolist()
 categories = df["category"].unique().tolist()
@@ -58,5 +63,5 @@ for i in range(len(categories)):
 print(np.array(chart))
 ax.imshow(np.array(chart), vmin=0.8)
 
-plt.savefig("parquet_row_group.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("parquet_row_group.png"), bbox_inches="tight")
 plt.close()

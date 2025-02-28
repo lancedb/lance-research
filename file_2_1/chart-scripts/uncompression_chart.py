@@ -1,10 +1,15 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+from pathlib import Path
+
+results_dir = Path(__file__).resolve().parent.parent.joinpath("results")
+charts_dir = Path(__file__).resolve().parent.parent.joinpath("charts")
+
 
 plt.rc("axes", axisbelow=True)
 
-df = pd.read_csv("uncompressed.csv")
+df = pd.read_csv(results_dir.joinpath("uncompressed.csv"))
 df = df.sort_values(by="uncompressed_size", ascending=False)
 
 fig, ax = plt.subplots()
@@ -44,7 +49,7 @@ ax.tick_params(axis="x", labelrotation=90)
 ax.set_xticks(x + width, categories)
 ax.legend()
 
-plt.savefig("uncompression.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("uncompression.png"), bbox_inches="tight")
 plt.close()
 
 
@@ -78,5 +83,5 @@ ax.tick_params(axis="x", labelrotation=90)
 ax.set_xticks(x + (width / 2), categories)
 ax.legend()
 
-plt.savefig("uncompression-ratios.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("uncompression-ratios.png"), bbox_inches="tight")
 plt.close()

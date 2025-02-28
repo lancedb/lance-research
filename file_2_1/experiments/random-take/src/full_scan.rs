@@ -87,7 +87,7 @@ struct Args {
     workdir: String,
 
     /// Path to the directory containing test files.
-    #[arg(long, default_value = "../compression/datafiles")]
+    #[arg(long, default_value = "../../data/real")]
     testdir: String,
 
     /// If true, enables tracing

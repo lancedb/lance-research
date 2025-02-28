@@ -1,12 +1,17 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker
+from pathlib import Path
+
+results_dir = Path(__file__).resolve().parent.parent.joinpath("results")
+charts_dir = Path(__file__).resolve().parent.parent.joinpath("charts")
+
 
 plt.rc("axes", axisbelow=True)
 
 SMALL_PAGE_SIZE = 8
 
-df = pd.read_csv("take_parquet.csv")
+df = pd.read_csv(results_dir.joinpath("take_parquet.csv"))
 # take_sizes = df["take_size"].unique().tolist()
 take_sizes = [256]
 datatypes = df["column"].unique().tolist()
@@ -33,7 +38,7 @@ datasizes = {
     "binary-list": 100 * 1024,
 }
 
-baselinedf = pd.read_csv("take_baseline.csv")
+baselinedf = pd.read_csv(results_dir.joinpath("take_baseline.csv"))
 
 fig, ax = plt.subplots()
 
@@ -84,5 +89,5 @@ for ts_idx, take_size in enumerate(take_sizes):
 
 ax.legend()
 
-plt.savefig("take_parquet.png", bbox_inches="tight")
+plt.savefig(charts_dir.joinpath("take_parquet.png"), bbox_inches="tight")
 plt.close()
