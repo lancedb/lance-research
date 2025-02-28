@@ -195,13 +195,13 @@ Parquet converts a nested array into a series of flattened leaf columns.  Each l
 
 \begin{figure}[h]
     \centering
-    \begin{bytefield}[bitheight=3em]{32}
-      \bitbox{8}{rep$[0..p0]$} & \bitbox{8}{def$[0..p0]$} & \bitbox{8}{lengths ($b_0[0..p0]$)} & \bitbox{8}{data ($b_1[0..p0]$)} \\
-      \bitbox{8}{rep$[p0..p1]$} & \bitbox{8}{def$[p0..p1]$} & \bitbox{8}{lengths ($b_0[p0..p1]$)} & \bitbox{8}{data ($b_1[p0..p1]$)} \\
+    \begin{bytefield}[bitheight=3em]{40}
+      \bitbox{10}{rep$[0..p0]$} & \bitbox{10}{def$[0..p0]$} & \bitbox{10}{$b_0[0..p0]$} & \bitbox{10}{$b_1[0..p0]$} \\
+      \bitbox{10}{rep$[p0..p0+p1]$} & \bitbox{10}{def$[p0..p0+p1]$} & \bitbox{10}{$b_0[p0..p0+p1]$} & \bitbox{10}{$b_1[p0..p0+p1]$} \\
       \wordbox[]{1}{$\vdots$} \\[1ex]
     \end{bytefield}
-    \Description{The image contains two boxes stacked on top of each other.  The top box is split into four boxes.  The first contains the repetition buffer from 0 to p0.  The second contains the definition buffer from 0 to p0.  The third contains the lengths buffer from 0 to p0.  The fourth contains the data buffer from 0 to p0.  The lower box is split into four similar boxes except they range from p0 to p1. }
-    \caption{An interpretation of a column chunk containing binary data (delta-length binary packed encoding) as a series of pages with $p0, p1, ...$ values in each page}
+    \Description{The image contains two boxes stacked on top of each other.  The top box is split into four boxes.  The first contains the repetition buffer from 0 to p0.  The second contains the definition buffer from 0 to p0.  The third contains the lengths buffer from 0 to p0.  The fourth contains the data buffer from 0 to p0.  The lower box is split into four similar boxes except they range from p0 to p0 + p1. }
+    \caption{An interpretation of a column chunk containing binary data (delta-length binary packed encoding) which has a buffer of lengths ($b_0$) and data ($b_1$) as a series of pages with $p0, p1, ...$ values in each page}
 \end{figure}
 
 Each page contains the relevant repetition and definition levels for the values on the page.  The exact number of buffers is irrelevant as the page is considered an opaque chunk and is not divisible.  This allows for sparsely encoding values (null items occupy no space in the items buffer) and the use of opaque compression algorithms such as delta encodings.
