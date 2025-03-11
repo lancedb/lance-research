@@ -8,6 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use clap::Parser;
 use futures::{StreamExt, TryStreamExt};
 use indicatif::ProgressBar;
 use object_store::{path::Path, ObjectStore, PutPayload};
@@ -21,7 +22,6 @@ const SECTOR_SIZE: usize = 4096;
 const FILE_SIZE: usize = 1024 * 1024 * 1024;
 const NUM_FILES: usize = 5;
 const CHUNK_SIZE: usize = 32 * 1024 * 1024;
-const BUCKET_NAME: &str = "weston-s3-lance-test";
 const PATH_PARENT: LazyCell<Path> = LazyCell::new(|| Path::parse("fsprof").unwrap());
 
 struct Experiment {
@@ -70,13 +70,18 @@ impl Experiment {
         }
     }
 
-    async fn profile_random_reads(&self) -> ExperimentResults {
-        let store = Arc::new(
-            object_store::aws::AmazonS3Builder::from_env()
-                .with_bucket_name(BUCKET_NAME)
-                .build()
-                .unwrap(),
-        );
+    async fn profile_random_reads(&self, config: &Arc<Config>) -> ExperimentResults {
+        let config = config.clone();
+        let builder = object_store::aws::AmazonS3Builder::from_env()
+            .with_bucket_name(&config.bucket_name)
+            .with_allow_http(true);
+        let builder = if let Some(endpoint) = &config.s3_endpoint {
+            builder.with_endpoint(endpoint)
+        } else {
+            builder
+        };
+
+        let store = Arc::new(builder.build().unwrap());
 
         self.setup(store.as_ref()).await;
         let num_iterations = Arc::new(AtomicUsize::new(0));
@@ -130,11 +135,22 @@ impl Experiment {
     }
 }
 
+#[derive(Parser)]
+struct Config {
+    #[arg(long = "bucket-name")]
+    bucket_name: String,
+
+    #[arg(long = "s3-endpoint")]
+    s3_endpoint: Option<String>,
+}
+
 fn main() {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
+
+    let config = Arc::new(Config::parse());
 
     let mut results_file = std::fs::File::create("s3_results.csv").unwrap();
     write!(
@@ -149,7 +165,7 @@ fn main() {
                 num_threads,
                 read_size_sectors,
             };
-            let results = rt.block_on(experiment.profile_random_reads());
+            let results = rt.block_on(experiment.profile_random_reads(&config));
             write!(
                 results_file,
                 "{},{},{},{}\n",

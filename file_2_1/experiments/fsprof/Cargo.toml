@@ -4,11 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-trait = "0.1.87"
 bytes = "1.9.0"
+clap = {version="4.5.31", features=["derive"]}
 futures = "0.3.31"
+futures-util = "0.3.31"
 indicatif = "0.17.9"
 libc = "0.2.169"
-object_store = { version = "0.11.1", features = ["aws"] }
+object_store = { version = "0.11.1", features = ["aws", "azure"] }
 rand = "0.8.5"
 tokio = { version = "1.42.0", features = [
     "rt",
@@ -24,3 +27,7 @@ path = "src/local.rs"
 [[bin]]
 name = "s3"
 path = "src/s3.rs"
+
+[[bin]]
+name = "storage"
+path = "src/storage.rs"
