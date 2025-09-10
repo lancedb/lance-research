@@ -1,0 +1,111 @@
+# Rust artifacts
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Benchmark/test data (large files)
+*.bin
+*.dat
+*.parquet
+*.lance
+test_data/
+benchmark_data/
+
+# Results that might be regenerated
+results/*.csv
+charts/*.png
+charts/*.jpg
+charts/*.svg
+charts/*.pdf
+
+# IDE and editor files
+*.swp
+*.swo
+*~
+.vimrc
+.emacs*
+
+# Profiling and debugging
+*.prof
+*.trace
+perf.data
+perf.data.old
+
+# OS generated files
+.directory
+.Trash-*
+.nfs*

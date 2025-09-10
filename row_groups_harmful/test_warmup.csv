@@ -1,0 +1,4 @@
+dataset,requested_row_group_size,actual_max_row_group_size,peak_rss_kb
+fineweb,1024,1024,5116
+fineweb,2048,2048,9096
+fineweb,4096,4096,26716

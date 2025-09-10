@@ -1,0 +1,20 @@
+[package]
+name = "write_memory_experiment"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "write_memory_experiment"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+parquet = { workspace = true }
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
+tempfile = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+libc = { workspace = true }
+utilities = { path = "../../utilities" }
