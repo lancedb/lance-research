@@ -101,8 +101,9 @@ impl BenchmarkJob for ObjectStoreJob {
 
             let mut rng = rand::thread_rng();
 
-            // For reasonable sized files (up to 1GB), create in memory
-            if target_size <= 1024 * 1024 * 1024 {
+            // Use multipart upload for files larger than 100MB
+            if target_size <= 100 * 1024 * 1024 {
+                // For smaller files, create all data in memory
                 let mut file_data = vec![0u8; target_size as usize];
                 rng.fill(&mut file_data[..]);
                 let file_bytes = Bytes::from(file_data);
@@ -111,29 +112,31 @@ impl BenchmarkJob for ObjectStoreJob {
                     .await
                     .unwrap();
             } else {
-                // For larger files, create using streaming approach
-                // This is a simplified approach - a production system would use multipart uploads
+                // For larger files, use multipart upload
                 let chunk_size = 64 * 1024 * 1024; // 64 MB chunks
-                let mut all_data = Vec::with_capacity(target_size as usize);
-
+                let mut multipart = self.object_store.put_multipart(&path).await.unwrap();
+                
                 let mut remaining = target_size;
+                let mut part_number = 1;
+                
                 while remaining > 0 {
                     let current_chunk_size = std::cmp::min(chunk_size, remaining) as usize;
                     let mut chunk_data = vec![0u8; current_chunk_size];
                     rng.fill(&mut chunk_data[..]);
-                    all_data.extend_from_slice(&chunk_data);
+                    
+                    let chunk_bytes = Bytes::from(chunk_data);
+                    multipart.put_part(chunk_bytes.into()).await.unwrap();
+                    
                     remaining -= current_chunk_size as u64;
-
-                    if all_data.len() % (chunk_size as usize * 10) == 0 {
-                        info!("Generated {} / {} bytes", all_data.len(), target_size);
+                    if part_number % 10 == 0 {
+                        let progress = ((target_size - remaining) as f64 / target_size as f64) * 100.0;
+                        info!("Uploaded part {}, progress: {:.1}%", part_number, progress);
                     }
+                    part_number += 1;
                 }
-
-                let file_bytes = Bytes::from(all_data);
-                self.object_store
-                    .put(&path, file_bytes.into())
-                    .await
-                    .unwrap();
+                
+                multipart.complete().await.unwrap();
+                info!("Multipart upload completed successfully");
             }
 
             info!("Test file created successfully");
