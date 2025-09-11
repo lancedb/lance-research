@@ -56,6 +56,7 @@ struct BenchmarkResult {
 trait BenchmarkJob: Send + Sync {
     fn ensure_test_file(&mut self, target_size: u64);
     fn run(&self, ranges: Arc<[Range<u64>]>, counter: Arc<AtomicUsize>);
+    fn max_reads_per_thread(&self) -> usize;
 }
 
 struct ObjectStoreJob {
@@ -115,26 +116,27 @@ impl BenchmarkJob for ObjectStoreJob {
                 // For larger files, use multipart upload
                 let chunk_size = 64 * 1024 * 1024; // 64 MB chunks
                 let mut multipart = self.object_store.put_multipart(&path).await.unwrap();
-                
+
                 let mut remaining = target_size;
                 let mut part_number = 1;
-                
+
                 while remaining > 0 {
                     let current_chunk_size = std::cmp::min(chunk_size, remaining) as usize;
                     let mut chunk_data = vec![0u8; current_chunk_size];
                     rng.fill(&mut chunk_data[..]);
-                    
+
                     let chunk_bytes = Bytes::from(chunk_data);
                     multipart.put_part(chunk_bytes.into()).await.unwrap();
-                    
+
                     remaining -= current_chunk_size as u64;
                     if part_number % 10 == 0 {
-                        let progress = ((target_size - remaining) as f64 / target_size as f64) * 100.0;
+                        let progress =
+                            ((target_size - remaining) as f64 / target_size as f64) * 100.0;
                         info!("Uploaded part {}, progress: {:.1}%", part_number, progress);
                     }
                     part_number += 1;
                 }
-                
+
                 multipart.complete().await.unwrap();
                 info!("Multipart upload completed successfully");
             }
@@ -168,6 +170,10 @@ impl BenchmarkJob for ObjectStoreJob {
                     .unwrap();
             }
         });
+    }
+
+    fn max_reads_per_thread(&self) -> usize {
+        1000
     }
 }
 
@@ -266,6 +272,10 @@ impl BenchmarkJob for StdFileJob {
             // Perform the read using std::fs
             file.read_exact_at(&mut buffer, range.start).unwrap();
         }
+    }
+
+    fn max_reads_per_thread(&self) -> usize {
+        1000000
     }
 }
 
@@ -401,7 +411,11 @@ fn benchmark_random_reads(
     parallel_reads: usize,
 ) -> (f64, f64) {
     // Generate non-overlapping random ranges
-    let ranges = generate_non_overlapping_ranges(file_size, read_size);
+    let ranges = generate_non_overlapping_ranges(
+        file_size,
+        read_size,
+        job.max_reads_per_thread() * parallel_reads,
+    );
 
     let num_reads = ranges.len();
     if num_reads < parallel_reads * 4 {
@@ -441,11 +455,15 @@ fn benchmark_random_reads(
     (bandwidth_mbps, iops_per_second)
 }
 
-fn generate_non_overlapping_ranges(file_size: u64, read_size: usize) -> Arc<[Range<u64>]> {
+fn generate_non_overlapping_ranges(
+    file_size: u64,
+    read_size: usize,
+    max_reads: usize,
+) -> Arc<[Range<u64>]> {
     let read_size_u64 = read_size as u64;
     // Ensure step is at least 4KB so reads are sector-aligned and to speed up smaller read size tests
     let step = read_size_u64.max(4 * 1024);
-    let num_reads = (file_size / step) as usize;
+    let num_reads = ((file_size / step) as usize).min(max_reads);
 
     // Generate all possible non-overlapping starting positions
     let mut possible_offsets = Vec::new();
