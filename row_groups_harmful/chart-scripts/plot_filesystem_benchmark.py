@@ -3,7 +3,7 @@
 Plot filesystem benchmark results from the evaluate_filesystem experiment.
 
 This script reads results/filesystem_benchmark.csv and creates a plot showing
-random read bandwidth vs read size, with sequential bandwidth as a horizontal line.
+random read bandwidth vs read size, with maximum bandwidth as a horizontal line.
 """
 
 import pandas as pd
@@ -50,10 +50,8 @@ def plot_filesystem_benchmark(csv_path, output_path=None, log_scale=False):
         )
         
         # Plot max bandwidth as horizontal dotted line
-        # Calculate max between sequential and all random read bandwidths
-        sequential_bandwidth = filesystem_data['sequential_bandwidth_mbps'].iloc[0]
-        max_random_bandwidth = filesystem_data['random_bandwidth_mbps'].max()
-        max_bandwidth = max(sequential_bandwidth, max_random_bandwidth)
+        # Use the maximum random read bandwidth
+        max_bandwidth = filesystem_data['random_bandwidth_mbps'].max()
         
         ax.axhline(
             y=max_bandwidth,
