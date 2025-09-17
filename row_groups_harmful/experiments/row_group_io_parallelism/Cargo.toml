@@ -1,0 +1,32 @@
+[package]
+name = "row_group_io_parallelism"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "row_group_io_parallelism"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+parquet = { workspace = true }
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
+arrow-buffer = { workspace = true }
+lance-file = { workspace = true }
+lance-io = { workspace = true }
+tempfile = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+object_store = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+rand = { workspace = true }
+datafusion = { workspace = true }
+datafusion-execution = { workspace = true }
+datafusion-physical-plan = { workspace = true }
+datafusion-physical-expr = { workspace = true }
+url = { workspace = true }
+utilities = { path = "../../utilities" }

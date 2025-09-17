@@ -24,6 +24,15 @@ def plot_filesystem_benchmark(csv_path, output_path=None, log_scale=False):
     # Read the CSV file
     df = pd.read_csv(csv_path)
     
+    # Define helper function for formatting bytes
+    def format_bytes(size):
+        if size >= 1024 * 1024:
+            return f'{size // (1024 * 1024)}MB'
+        elif size >= 1024:
+            return f'{size // 1024}KB'
+        else:
+            return f'{size}B'
+    
     # Create the plot
     fig, ax = plt.subplots(figsize=(12, 8))
     
@@ -49,18 +58,26 @@ def plot_filesystem_benchmark(csv_path, output_path=None, log_scale=False):
             solid_capstyle='round'
         )
         
-        # Plot max bandwidth as horizontal dotted line
-        # Use the maximum random read bandwidth
+        # Plot vertical line at 90% of max bandwidth threshold
         max_bandwidth = filesystem_data['random_bandwidth_mbps'].max()
+        threshold_bandwidth = 0.9 * max_bandwidth
         
-        ax.axhline(
-            y=max_bandwidth,
-            color=colors[i],
-            linestyle='--',
-            linewidth=2,
-            label=f'{filesystem} (max bandwidth)',
-            alpha=0.8
-        )
+        # Find the first read size where bandwidth reaches 90% of max
+        threshold_read_size = None
+        for _, row in filesystem_data.iterrows():
+            if row['random_bandwidth_mbps'] >= threshold_bandwidth:
+                threshold_read_size = row['read_size']
+                break
+        
+        if threshold_read_size is not None:
+            ax.axvline(
+                x=threshold_read_size,
+                color=colors[i],
+                linestyle='--',
+                linewidth=2,
+                label=f'{filesystem} (spd)',
+                alpha=0.8
+            )
     
     # Set log scale for x-axis (read size)
     ax.set_xscale('log', base=2)
@@ -74,21 +91,13 @@ def plot_filesystem_benchmark(csv_path, output_path=None, log_scale=False):
     
     # Set labels and title
     ax.set_xlabel('Read Size (bytes)')
-    ax.set_title('Filesystem Benchmark: Random Read Performance vs Maximum Bandwidth')
+    ax.set_title('Filesystem Benchmark: Random Read Performance vs 90% Bandwidth Threshold')
     
     # Format x-axis ticks to show powers of 2
     x_ticks = sorted(df['read_size'].unique())
     ax.set_xticks(x_ticks)
     
     # Format x-axis labels with human-readable sizes
-    def format_bytes(size):
-        if size >= 1024 * 1024:
-            return f'{size // (1024 * 1024)}MB'
-        elif size >= 1024:
-            return f'{size // 1024}KB'
-        else:
-            return f'{size}B'
-    
     ax.set_xticklabels([format_bytes(x) for x in x_ticks], rotation=45)
     
     # Add grid

@@ -1,0 +1,11 @@
+[project]
+name = "duckdb-scan"
+version = "0.1.0"
+description = "DuckDB Row Group Scan Benchmarks"
+requires-python = ">=3.9"
+dependencies = [
+    "duckdb>=0.9.0",
+    "pandas>=2.0.0",
+    "pyarrow>=14.0.0",
+    "matplotlib>=3.7.0",
+]

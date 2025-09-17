@@ -1,0 +1,15 @@
+dataset,requested_row_group_size,actual_max_row_group_size,peak_rss_kb
+fineweb,128,128,0
+fineweb,256,256,0
+fineweb,512,512,0
+fineweb,1024,1024,0
+fineweb,2048,2048,0
+fineweb,4096,4096,0
+fineweb,8192,8192,0
+fineweb,16384,16384,13056
+fineweb,32768,32768,64212
+fineweb,65536,65536,194664
+fineweb,131072,131072,348728
+fineweb,262144,262144,587364
+fineweb,524288,524288,1101108
+fineweb,1048576,1004971,2133856

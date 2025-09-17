@@ -85,13 +85,6 @@ $RECYCLE.BIN/
 test_data/
 benchmark_data/
 
-# Results that might be regenerated
-results/*.csv
-charts/*.png
-charts/*.jpg
-charts/*.svg
-charts/*.pdf
-
 # IDE and editor files
 *.swp
 *.swo

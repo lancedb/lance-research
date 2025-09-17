@@ -165,7 +165,7 @@ impl BenchmarkJob for ObjectStoreJob {
 
                 // Perform the read
                 self.object_store
-                    .get_range(&path, range.start as usize..range.end as usize)
+                    .get_range(&path, range.start..range.end)
                     .await
                     .unwrap();
             }
