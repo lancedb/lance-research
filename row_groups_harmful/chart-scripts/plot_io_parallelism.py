@@ -37,6 +37,11 @@ def load_io_data(csv_path):
     # Calculate range size
     df["range_size"] = df["range_end"] - df["range_start"]
 
+    # Calculate throughput in MiBps (Mebibytes per second)
+    # range_size is in bytes, duration_ms is in milliseconds
+    # Convert to MiBps: (bytes / (1024*1024)) / (ms / 1000)
+    df["throughput_mibps"] = (df["range_size"] / (1024 * 1024)) / (df["duration_ms"] / 1000.0)
+
     return df
 
 
@@ -62,19 +67,22 @@ def create_io_timeline_plot(df, output_path, height_pixels=20):
     print(
         f"Time range: {df['relative_time'].min():.6f}s to {df['relative_time'].max():.6f}s"
     )
+    print(
+        f"Throughput range: {df['throughput_mibps'].min():.2f} to {df['throughput_mibps'].max():.2f} MiBps"
+    )
 
-    # Create color map based on duration
-    duration_range = df["duration_ms"].max() - df["duration_ms"].min()
-    if duration_range == 0:
-        duration_range = 1  # Avoid division by zero
+    # Create color map based on throughput
+    throughput_range = df["throughput_mibps"].max() - df["throughput_mibps"].min()
+    if throughput_range == 0:
+        throughput_range = 1  # Avoid division by zero
 
     # Calculate time range for layout purposes
     time_range = df["relative_time"].max() - df["relative_time"].min()
     if time_range == 0:
         time_range = 1  # Avoid division by zero
 
-    # Use a colormap that shows duration progression
-    colormap = plt.cm.plasma
+    # Use a colormap that shows throughput progression
+    colormap = plt.cm.viridis
 
     # Plot each I/O request as a colored rectangle
     # Y-axis represents the time when the read occurred
@@ -82,11 +90,11 @@ def create_io_timeline_plot(df, output_path, height_pixels=20):
         start_byte = row["range_start"]
         end_byte = row["range_end"]
         time = row["relative_time"]
-        duration = row["duration_ms"]
+        throughput = row["throughput_mibps"]
 
-        # Normalize duration to [0, 1] for colormap
-        duration_normalized = (duration - df["duration_ms"].min()) / duration_range
-        color = colormap(duration_normalized)
+        # Normalize throughput to [0, 1] for colormap
+        throughput_normalized = (throughput - df["throughput_mibps"].min()) / throughput_range
+        color = colormap(throughput_normalized)
 
         # Create rectangle for this I/O request
         # Y-position represents the time when this read occurred
@@ -95,7 +103,7 @@ def create_io_timeline_plot(df, output_path, height_pixels=20):
         rect = patches.Rectangle(
             (start_byte, y_position),  # (x, y) position
             end_byte - start_byte,  # width (byte range)
-            time_range * 0.01,  # height (small fixed duration for visibility)
+            time_range * 0.02,  # height as small fraction of time range
             linewidth=0.5,
             edgecolor="black",
             facecolor=color,
@@ -114,17 +122,17 @@ def create_io_timeline_plot(df, output_path, height_pixels=20):
     ax.set_xlabel("Byte Position in File")
     ax.set_ylabel("Time (seconds from start)")
     ax.set_title(
-        "I/O Request Timeline: Byte Ranges by Read Time\n(Color: Duration from Fast → Slow)"
+        "I/O Request Timeline: Byte Ranges by Read Time\n(Color: Throughput from Low → High)"
     )
 
-    # Add colorbar to show duration mapping
+    # Add colorbar to show throughput mapping
     sm = plt.cm.ScalarMappable(
         cmap=colormap,
-        norm=plt.Normalize(vmin=df["duration_ms"].min(), vmax=df["duration_ms"].max()),
+        norm=plt.Normalize(vmin=df["throughput_mibps"].min(), vmax=df["throughput_mibps"].max()),
     )
     sm.set_array([])
     cbar = plt.colorbar(sm, ax=ax)
-    cbar.set_label("Duration (milliseconds)")
+    cbar.set_label("Throughput (MiBps)")
 
     # Format x-axis with readable byte labels
     def format_bytes(x, p):

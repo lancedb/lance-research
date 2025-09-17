@@ -52,5 +52,8 @@ datafusion-physical-plan = "49"
 datafusion-physical-expr = "49"
 
 # Lance dependencies
+lance-encoding = "0.36"
 lance-file = "0.36"
 lance-io = "0.36"
+lance-datafusion = "0.36"
+lance = "0.36"
