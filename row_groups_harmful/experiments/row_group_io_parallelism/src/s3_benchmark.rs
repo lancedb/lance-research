@@ -649,7 +649,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Set up S3 object store
     let s3_store = setup_s3_object_store(&args.s3_uri, args.region).await?;
-    let tracked_requests = Arc::new(TrackedRequests::new());
 
     let should_test_parquet = args.format == "parquet" || args.format == "both";
     let should_test_lance = args.format == "lance" || args.format == "both";
@@ -688,6 +687,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Parquet file already exists, skipping creation");
         }
 
+        let tracked_requests = Arc::new(TrackedRequests::new());
         let tracking_store = Arc::new(TrackingObjectStore::new(s3_store, tracked_requests.clone()));
 
         // Reset tracking for the query portion
@@ -726,6 +726,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Run query
+        let tracked_requests = Arc::new(TrackedRequests::new());
         run_lance_query_s3(&lance_uri, args.partitions, tracked_requests.clone()).await?;
 
         let requests = tracked_requests.get_requests();
