@@ -183,6 +183,7 @@ impl ObjectStore for TrackingObjectStore {
         options: GetOptions,
     ) -> object_store::Result<GetResult> {
         let start = Instant::now();
+        dbg!(&options.range);
         let range = match &options.range {
             Some(GetRange::Bounded(range)) => Some((range.start, range.end)),
             _ => unimplemented!(),
