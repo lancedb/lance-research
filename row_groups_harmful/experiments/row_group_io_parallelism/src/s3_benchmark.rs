@@ -182,43 +182,44 @@ impl ObjectStore for TrackingObjectStore {
         location: &ObjectPath,
         options: GetOptions,
     ) -> object_store::Result<GetResult> {
-        let start = Instant::now();
-        let range = match &options.range {
-            Some(GetRange::Bounded(range)) => Some((range.start, range.end)),
-            None => {
-                return self.inner.get_opts(location, options).await;
-            }
-            _ => unimplemented!(),
-        };
-        let result = self.inner.get_opts(location, options).await?;
-        let first = AtomicBool::new(false);
-        let location = location.clone();
-        let tracked_requests = self.tracked_requests.clone();
-        match result.payload {
-            GetResultPayload::File(_, _) => unimplemented!(),
-            GetResultPayload::Stream(stream) => {
-                let tracked_stream = stream
-                    .map(move |result| {
-                        let result = result?;
-                        let duration = start.elapsed().as_nanos() as u64;
-                        tracked_requests.record_request(&location.to_string(), range, duration);
-                        if !first
-                            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                            .is_ok()
-                        {
-                            panic!("Stream returned multiple values");
-                        }
-                        Ok(result)
-                    })
-                    .boxed();
-                Ok(GetResult {
-                    payload: GetResultPayload::Stream(tracked_stream),
-                    meta: result.meta,
-                    range: result.range,
-                    attributes: result.attributes,
-                })
-            }
-        }
+        self.inner.get_opts(location, options).await
+        // let start = Instant::now();
+        // let range = match &options.range {
+        //     Some(GetRange::Bounded(range)) => Some((range.start, range.end)),
+        //     None => {
+        //         return self.inner.get_opts(location, options).await;
+        //     }
+        //     _ => unimplemented!(),
+        // };
+        // let result = self.inner.get_opts(location, options).await?;
+        // let first = AtomicBool::new(false);
+        // let location = location.clone();
+        // let tracked_requests = self.tracked_requests.clone();
+        // match result.payload {
+        //     GetResultPayload::File(_, _) => unimplemented!(),
+        //     GetResultPayload::Stream(stream) => {
+        //         let tracked_stream = stream
+        //             .map(move |result| {
+        //                 let result = result?;
+        //                 let duration = start.elapsed().as_nanos() as u64;
+        //                 tracked_requests.record_request(&location.to_string(), range, duration);
+        //                 if !first
+        //                     .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        //                     .is_ok()
+        //                 {
+        //                     panic!("Stream returned multiple values");
+        //                 }
+        //                 Ok(result)
+        //             })
+        //             .boxed();
+        //         Ok(GetResult {
+        //             payload: GetResultPayload::Stream(tracked_stream),
+        //             meta: result.meta,
+        //             range: result.range,
+        //             attributes: result.attributes,
+        //         })
+        //     }
+        // }
     }
 
     async fn get_range(
