@@ -179,14 +179,6 @@ impl ObjectStore for TrackingObjectStore {
         result
     }
 
-    async fn get_ranges(
-        &self,
-        location: &ObjectPath,
-        ranges: &[std::ops::Range<u64>],
-    ) -> object_store::Result<Vec<Bytes>> {
-        unimplemented!()
-    }
-
     async fn head(&self, location: &ObjectPath) -> object_store::Result<ObjectMeta> {
         self.inner.head(location).await
     }
