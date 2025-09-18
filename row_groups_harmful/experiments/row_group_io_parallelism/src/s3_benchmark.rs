@@ -629,9 +629,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if should_test_lance {
         info!("=== Testing Lance Format on S3 ===");
 
-        // Generate synthetic lance dataset
-        create_synthetic_lance_dataset_s3(&lance_uri, args.num_row_groups, args.rows_per_group)
-            .await?;
+        // Try to open existing dataset first, create only if it doesn't exist
+        let dataset_exists = DatasetBuilder::from_uri(&lance_uri).load().await.is_ok();
+
+        if !dataset_exists {
+            info!("Dataset doesn't exist, creating synthetic lance dataset");
+            create_synthetic_lance_dataset_s3(&lance_uri, args.num_row_groups, args.rows_per_group)
+                .await?;
+        } else {
+            info!("Dataset already exists, skipping creation");
+        }
 
         // Run query
         run_lance_query_s3(&lance_uri, args.partitions, tracked_requests.clone()).await?;
