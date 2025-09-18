@@ -2,10 +2,19 @@
 name = "row_group_io_parallelism"
 version = "0.1.0"
 edition = "2021"
+default-run = "benchmark_io_parallelism"
 
 [[bin]]
-name = "row_group_io_parallelism"
+name = "benchmark_io_parallelism"
 path = "src/main.rs"
+
+[[bin]]
+name = "run_query"
+path = "src/run_query.rs"
+
+[[bin]]
+name = "benchmark_s3_io"
+path = "src/s3_benchmark.rs"
 
 [dependencies]
 clap = { workspace = true }
@@ -32,4 +41,7 @@ datafusion-execution = { workspace = true }
 datafusion-physical-plan = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 url = { workspace = true }
+regex = "1.0"
 utilities = { path = "../../utilities" }
+aws-config = "1.0"
+aws-sdk-s3 = "1.0"

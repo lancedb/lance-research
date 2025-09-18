@@ -1,35 +1,20 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Stdio};
+use std::sync::Arc;
 
-use arrow_array::cast::AsArray;
 use arrow_array::{
     Array, Float64Array, Int64Array, RecordBatch, RecordBatchIterator, RecordBatchReader,
 };
 use arrow_schema::{DataType, Field, Schema};
-use async_trait::async_trait;
 use clap::Parser;
-use datafusion::functions_aggregate::sum::sum_udaf;
-use datafusion::logical_expr::expr::AggregateFunction;
-use datafusion::prelude::{col, Expr, ParquetReadOptions, SessionConfig, SessionContext};
-use datafusion_execution::runtime_env::RuntimeEnvBuilder;
-use futures::stream::BoxStream;
-use lance::datafusion::LanceTableProvider;
-use lance::dataset::builder::DatasetBuilder;
-use lance::dataset::{ReadParams, WriteParams};
-use lance::io::{ObjectStoreParams, WrappingObjectStore};
+use lance::dataset::WriteParams;
 use lance::Dataset;
 use lance_file::version::LanceFileVersion;
-use object_store::PutMultipartOptions;
-use object_store::{
-    path::Path as ObjectPath, GetOptions, GetRange, GetResult, ListResult, MultipartUpload,
-    ObjectMeta, ObjectStore, PutOptions, PutPayload, PutResult, Result as ObjectStoreResult,
-};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::{WriterProperties, WriterVersion};
 use rand::Rng;
+use regex::Regex;
 use tempfile;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -63,6 +48,10 @@ struct Args {
     /// Base path or URI for test files (e.g., /tmp, s3://bucket/prefix)
     #[arg(long, default_value = "/tmp")]
     base_path: String,
+
+    /// Path to run_query binary (default: auto-detect)
+    #[arg(long)]
+    run_query_bin: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -73,180 +62,6 @@ struct IoRequest {
     path: String,
     range_start: Option<u64>,
     range_end: Option<u64>,
-}
-
-#[derive(Debug)]
-struct TrackingObjectStore {
-    inner: Box<dyn ObjectStore>,
-    request_counter: AtomicU64,
-    requests: Arc<Mutex<Vec<IoRequest>>>,
-}
-
-impl std::fmt::Display for TrackingObjectStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "TrackingObjectStore({})", self.inner)
-    }
-}
-
-impl TrackingObjectStore {
-    fn new(inner: Box<dyn ObjectStore>) -> Self {
-        Self {
-            inner,
-            request_counter: AtomicU64::new(0),
-            requests: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    fn record_request(
-        &self,
-        path: &str,
-        duration: u64,
-        start_timestamp: u64,
-        range_start: Option<u64>,
-        range_end: Option<u64>,
-    ) {
-        let current_count = self.request_counter.fetch_add(1, Ordering::SeqCst);
-        let request = IoRequest {
-            duration,
-            start_timestamp,
-            requests_in_flight: current_count + 1,
-            path: path.to_string(),
-            range_start,
-            range_end,
-        };
-
-        if let Ok(mut requests) = self.requests.lock() {
-            requests.push(request);
-        }
-    }
-
-    fn finish_request(&self) {
-        self.request_counter.fetch_sub(1, Ordering::SeqCst);
-    }
-
-    pub fn get_requests(&self) -> Vec<IoRequest> {
-        self.requests.lock().unwrap().clone()
-    }
-
-    pub fn clear(&self) {
-        self.requests.lock().unwrap().clear();
-        self.request_counter.store(0, Ordering::SeqCst);
-    }
-}
-
-#[async_trait]
-impl ObjectStore for TrackingObjectStore {
-    async fn put(
-        &self,
-        location: &ObjectPath,
-        payload: PutPayload,
-    ) -> ObjectStoreResult<PutResult> {
-        self.inner.put(location, payload).await
-    }
-
-    async fn put_opts(
-        &self,
-        location: &ObjectPath,
-        payload: PutPayload,
-        opts: PutOptions,
-    ) -> ObjectStoreResult<PutResult> {
-        self.inner.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &ObjectPath,
-        opts: PutMultipartOptions,
-    ) -> ObjectStoreResult<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    fn list(
-        &self,
-        prefix: Option<&ObjectPath>,
-    ) -> BoxStream<'static, ObjectStoreResult<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn get(&self, location: &ObjectPath) -> ObjectStoreResult<GetResult> {
-        let start = SystemTime::now();
-        let result = self.inner.get(location).await;
-        self.finish_request();
-        let duration = start.elapsed().unwrap().as_nanos() as u64;
-        let start_timestamp = start.duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
-        self.record_request(location.as_ref(), duration, start_timestamp, None, None);
-        result
-    }
-
-    async fn get_opts(
-        &self,
-        location: &ObjectPath,
-        options: GetOptions,
-    ) -> ObjectStoreResult<GetResult> {
-        let (range_start, range_end) = if let Some(range) = &options.range {
-            match range {
-                GetRange::Bounded(r) => (Some(r.start), Some(r.end)),
-                GetRange::Offset(start) => (Some(*start), None),
-                GetRange::Suffix(len) => (None, Some(*len)),
-            }
-        } else {
-            (None, None)
-        };
-        let start = SystemTime::now();
-        let result = self.inner.get_opts(location, options).await;
-        self.finish_request();
-        let end = SystemTime::now();
-        let duration = end.duration_since(start).unwrap().as_nanos() as u64;
-        let start_timestamp = start.duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
-        self.record_request(
-            location.as_ref(),
-            duration,
-            start_timestamp,
-            range_start,
-            range_end,
-        );
-        result
-    }
-
-    async fn delete(&self, location: &ObjectPath) -> ObjectStoreResult<()> {
-        self.inner.delete(location).await
-    }
-
-    async fn list_with_delimiter(
-        &self,
-        prefix: Option<&ObjectPath>,
-    ) -> ObjectStoreResult<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy(&self, from: &ObjectPath, to: &ObjectPath) -> ObjectStoreResult<()> {
-        self.inner.copy(from, to).await
-    }
-
-    async fn copy_if_not_exists(
-        &self,
-        from: &ObjectPath,
-        to: &ObjectPath,
-    ) -> ObjectStoreResult<()> {
-        self.inner.copy_if_not_exists(from, to).await
-    }
-
-    async fn head(&self, location: &ObjectPath) -> ObjectStoreResult<ObjectMeta> {
-        self.inner.head(location).await
-    }
-}
-
-#[derive(Debug, Clone)]
-struct TrackingWrapper;
-
-impl WrappingObjectStore for TrackingWrapper {
-    fn wrap(
-        &self,
-        original: Arc<dyn ObjectStore>,
-        _storage_options: Option<&HashMap<String, String>>,
-    ) -> Arc<dyn ObjectStore> {
-        Arc::new(TrackingObjectStore::new(Box::new(original)))
-    }
 }
 
 fn create_synthetic_data(
@@ -278,10 +93,10 @@ fn create_synthetic_data(
         )));
         for _ in 0..NUM_FIELDS {
             arrays.push(Arc::new(Float64Array::from_iter_values(
-                (0..rows_per_batch).map(|_| rng.gen::<f64>() * 100.0),
+                (0..rows_per_batch).map(|_| rng.gen::<f64>()),
             )));
             arrays.push(Arc::new(Float64Array::from_iter_values(
-                (0..rows_per_batch).map(|_| rng.gen::<f64>() * 100.0),
+                (0..rows_per_batch).map(|_| rng.gen::<f64>()),
             )));
         }
 
@@ -292,23 +107,24 @@ fn create_synthetic_data(
 }
 
 async fn create_synthetic_lance_dataset(
-    uri: &str,
+    path: &str,
     num_row_groups: usize,
     rows_per_group: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!(
         "Creating synthetic lance dataset with {} rows at {}",
         num_row_groups * rows_per_group,
-        uri
+        path
     );
 
     let reader = create_synthetic_data(rows_per_group, num_row_groups)?;
 
     Dataset::write(
         reader,
-        uri,
+        path,
         Some(WriteParams {
             data_storage_version: Some(LanceFileVersion::V2_1),
+            max_rows_per_file: rows_per_group * num_row_groups,
             ..Default::default()
         }),
     )
@@ -318,13 +134,13 @@ async fn create_synthetic_lance_dataset(
 }
 
 async fn create_synthetic_parquet_file(
-    uri: &str,
+    path: &str,
     num_row_groups: usize,
     rows_per_group: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!(
         "Creating synthetic parquet file with {} row groups, {} rows each at {}",
-        num_row_groups, rows_per_group, uri
+        num_row_groups, rows_per_group, path
     );
 
     let reader = create_synthetic_data(rows_per_group, num_row_groups)?;
@@ -335,39 +151,14 @@ async fn create_synthetic_parquet_file(
         .set_max_row_group_size(rows_per_group)
         .build();
 
-    if uri.starts_with("s3://") || uri.starts_with("gs://") || uri.contains("://") {
-        // Handle remote URIs using object store
-        let (object_store, path) = object_store::parse_url(&url::Url::parse(uri)?)?;
+    let file = std::fs::File::create(path)?;
+    let mut writer = ArrowWriter::try_new(file, reader.schema(), Some(props))?;
 
-        // Create a temporary file first, then upload
-        let temp_file = tempfile::NamedTempFile::new()?;
-        let mut writer = ArrowWriter::try_new(
-            temp_file.as_file().try_clone()?,
-            reader.schema(),
-            Some(props),
-        )?;
-
-        for batch in reader {
-            writer.write(&batch?)?;
-        }
-        writer.close()?;
-
-        // Read the temporary file and upload to object store
-        let data = tokio::fs::read(temp_file.path()).await?;
-        object_store.put(&path, data.into()).await?;
-
-        info!("Synthetic parquet file uploaded to: {}", uri);
-    } else {
-        // Handle local file paths
-        let file = std::fs::File::create(uri)?;
-        let mut writer = ArrowWriter::try_new(file, reader.schema(), Some(props))?;
-
-        for batch in reader {
-            writer.write(&batch?)?;
-        }
-        writer.close()?;
-        info!("Synthetic parquet file created at: {}", uri);
+    for batch in reader {
+        writer.write(&batch?)?;
     }
+    writer.close()?;
+    info!("Synthetic parquet file created at: {}", path);
 
     Ok(())
 }
@@ -381,7 +172,6 @@ fn clear_disk_cache() -> Result<(), Box<dyn std::error::Error>> {
         info!("Attempting to clear Linux page cache");
 
         // Try to clear page cache, dentries and inodes
-        // This requires root privileges or appropriate capabilities
         let result = std::process::Command::new("sync").output();
 
         if result.is_ok() {
@@ -416,190 +206,209 @@ fn clear_disk_cache() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_datafusion_parquet_query(
-    parquet_uri: &str,
-    partitions: usize,
-) -> Result<Arc<TrackingObjectStore>, Box<dyn std::error::Error>> {
-    info!(
-        "Running DataFusion Parquet query with {} partitions",
-        partitions
-    );
+fn parse_request(
+    timestamp_str: &str,
+    duration_str: &str,
+    offset: u64,
+    bytes_read: u64,
+    first_timestamp: &mut Option<f64>,
+    request_counter: u64,
+) -> IoRequest {
+    let time_parts: Vec<&str> = timestamp_str.split(':').collect();
+    assert_eq!(time_parts.len(), 3);
+    let hour: f64 = time_parts[0].parse().unwrap_or(0.0);
+    let minute: f64 = time_parts[1].parse().unwrap_or(0.0);
+    let second: f64 = time_parts[2].parse().unwrap_or(0.0);
+    let timestamp_seconds = hour * 3600.0 + minute * 60.0 + second;
 
-    // Determine the file URI format
-    let file_uri = if parquet_uri.contains("://") {
-        parquet_uri.to_string()
-    } else {
-        format!("file://{}", parquet_uri)
-    };
-
-    info!("Reading parquet file: {}", file_uri);
-
-    // Create appropriate object store with tracking based on URI scheme
-    let uri_parsed = url::Url::parse(&file_uri)?;
-    let (base_store, tracking_store) = match uri_parsed.scheme() {
-        "file" => {
-            let local_store = object_store::local::LocalFileSystem::new();
-            let tracking = Arc::new(TrackingObjectStore::new(Box::new(local_store)));
-            (uri_parsed.clone(), tracking)
-        }
-        "s3" => {
-            let (s3_store, _) = object_store::parse_url(&uri_parsed)?;
-            let tracking = Arc::new(TrackingObjectStore::new(s3_store));
-            (uri_parsed.clone(), tracking)
-        }
-        _ => {
-            let (store, _) = object_store::parse_url(&uri_parsed)?;
-            let tracking = Arc::new(TrackingObjectStore::new(store));
-            (uri_parsed.clone(), tracking)
-        }
-    };
-
-    // Create runtime environment and register our tracking object store
-    let runtime_env = RuntimeEnvBuilder::new().build_arc().unwrap();
-
-    runtime_env
-        .object_store_registry
-        .register_store(&base_store, tracking_store.clone());
-
-    let session_context = SessionContext::new_with_config_rt(
-        SessionConfig::default().with_target_partitions(partitions),
-        runtime_env,
-    );
-
-    let make_df = || async {
-        let df = session_context
-            .read_parquet(&file_uri, ParquetReadOptions::default())
-            .await
-            .unwrap();
-
-        let mut sum_exprs = Vec::new();
-        for i in 0..NUM_FIELDS {
-            sum_exprs.push(Expr::AggregateFunction(AggregateFunction::new_udf(
-                sum_udaf(),
-                vec![col(format!("value_{}", i))],
-                false,
-                None,
-                vec![],
-                None,
-            )));
-        }
-
-        df.aggregate(vec![], sum_exprs).unwrap()
-    };
-
-    let res = make_df()
-        .await
-        .explain(true, false)
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
-
-    for batch in res {
-        let plans = batch.column(1).as_string::<i32>();
-        println!("{}", plans.value(plans.len() - 1));
+    // Calculate relative timestamp from first occurrence
+    if first_timestamp.is_none() {
+        println!("First timestamp: {}", timestamp_str);
+        *first_timestamp = Some(timestamp_seconds);
     }
+    let relative_timestamp = timestamp_seconds - first_timestamp.unwrap();
+    let start_timestamp = (relative_timestamp * 1e9) as u64;
 
-    make_df().await.collect().await.unwrap();
+    // Convert duration to nanoseconds
+    let duration_seconds: f64 = duration_str.parse().unwrap_or(0.0);
+    let duration = (duration_seconds * 1e9) as u64;
 
-    // Clear the tracking store
-    tracking_store.clear();
-
-    // Clear the OS disk cache to ensure real I/O timing (only for local files)
-    if uri_parsed.scheme() == "file" {
-        info!("Clearing disk cache to measure real I/O performance");
-        clear_disk_cache()?;
-
-        // Add a small delay to ensure cache clearing has taken effect
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    IoRequest {
+        duration,
+        start_timestamp,
+        requests_in_flight: request_counter,
+        path: "traced_file".to_string(),
+        range_start: Some(offset),
+        range_end: Some(offset + bytes_read),
     }
-
-    make_df().await.collect().await.unwrap();
-
-    Ok(tracking_store)
 }
 
-async fn run_datafusion_lance_query(
-    lance_uri: &str,
+fn parse_strace_output(strace_output: &str) -> Vec<IoRequest> {
+    let mut requests = Vec::new();
+
+    // Regex to parse strace output for pread64 and read syscalls
+    // Example: 1718304 14:32:15.123456 pread64(3, "...", 8192, 1048576) = 8192 <0.000123>
+    // Example: 1718304 05:52:12.989134 lseek(9, 665722183, SEEK_SET) = 665722183 <0.000019>
+    // Example: 1718301 05:52:12.989342 openat(AT_FDCWD, "/tmp/test.parquet", O_RDONLY|O_CLOEXEC) = 10 <0.000027>
+    // Example: 1718304 05:52:12.989580 read(9, "..."..., 32768) = 32768 <0.000186>
+    let read_re =
+        Regex::new(r"\d+\s+(\d+:\d+:\d+\.\d+)\s+read\((\d+),.*\s+(\d+)\s+<([\d.]+)>").unwrap();
+    let pread_re = Regex::new(
+        r"\d+\s+(\d+:\d+:\d+\.\d+)\s+pread64\((\d+),.*\s+(\d+)\)\s+=\s+(\d+)\s+<([\d.]+)>",
+    )
+    .unwrap();
+    let seek_re = Regex::new(r".*lseek\((\d+),\s+(\d+),.*").unwrap();
+    let open_re = Regex::new(r#".*openat.*"(.*)".*=\s+(\d+).*"#).unwrap();
+
+    let mut request_counter = 0;
+    let mut first_timestamp: Option<f64> = None;
+    let mut positions = HashMap::new();
+    let mut open_fds = HashMap::new();
+
+    for line in strace_output.lines() {
+        if let Some(caps) = seek_re.captures(line) {
+            let fd = &caps[1].parse::<u64>().unwrap_or(0);
+            if !open_fds.contains_key(fd) {
+                continue;
+            }
+            let offset = &caps[2].parse::<u64>().unwrap_or(0);
+            positions.insert(*fd, *offset);
+            println!("Seek to offset {} for fd {}", offset, fd);
+        } else if let Some(caps) = open_re.captures(line) {
+            let filename = &caps[1];
+            let fd = caps[2].parse::<u64>().unwrap_or(0);
+            if filename.ends_with("parquet") || filename.ends_with("lance") {
+                println!("Open fd {}", fd);
+                open_fds.insert(fd, fd);
+            } else {
+                println!("Open fd (non-data-file) {}", fd);
+                open_fds.remove(&fd);
+            }
+        } else if let Some(caps) = read_re.captures(line) {
+            let timestamp_str = &caps[1];
+            let fd = caps[2].parse::<u64>().unwrap_or(0);
+            if !open_fds.contains_key(&fd) {
+                continue;
+            }
+            let bytes_read = &caps[3].parse::<u64>().unwrap_or(0);
+            let duration_str = &caps[4];
+
+            let offset = positions.get(&fd).copied().unwrap_or(0);
+            positions.insert(fd, offset + *bytes_read);
+
+            let request = parse_request(
+                timestamp_str,
+                duration_str,
+                offset,
+                *bytes_read,
+                &mut first_timestamp,
+                request_counter,
+            );
+
+            requests.push(request);
+            request_counter += 1;
+
+            println!(
+                "Read {} bytes from offset {} for fd {}",
+                bytes_read, offset, fd
+            );
+        } else if let Some(caps) = pread_re.captures(line) {
+            let timestamp_str = &caps[1];
+            let fd = caps[2].parse::<u64>().unwrap_or(0);
+            if !open_fds.contains_key(&fd) {
+                continue;
+            }
+            let offset = caps[3].parse::<u64>().unwrap_or(0);
+            let bytes_read = caps[4].parse::<u64>().unwrap_or(0);
+            let duration_str = &caps[5];
+
+            let request = parse_request(
+                timestamp_str,
+                duration_str,
+                offset,
+                bytes_read,
+                &mut first_timestamp,
+                request_counter,
+            );
+
+            requests.push(request);
+            request_counter += 1;
+
+            println!(
+                "Pread {} bytes from offset {} for fd {}",
+                bytes_read, offset, fd
+            );
+        }
+    }
+
+    requests
+}
+
+async fn run_query_with_strace(
+    run_query_bin: &str,
+    file_path: &str,
+    format: &str,
     partitions: usize,
 ) -> Result<Vec<IoRequest>, Box<dyn std::error::Error>> {
-    info!(
-        "Running DataFusion Lance query with {} partitions",
-        partitions
-    );
+    // Create a temporary file for strace output
+    let strace_output_file = tempfile::NamedTempFile::new()?;
+    let strace_output_path = strace_output_file.path().to_string_lossy().to_string();
 
-    info!("Reading lance dataset: {}", lance_uri);
+    // Clear disk cache before running the query
+    clear_disk_cache()?;
 
-    let session_context = SessionContext::new_with_config(
-        SessionConfig::default().with_target_partitions(partitions),
-    );
+    info!("Running query with strace tracking");
 
-    let lance_dataset = DatasetBuilder::from_uri(lance_uri)
-        .with_read_params(ReadParams {
-            store_options: Some(ObjectStoreParams {
-                object_store_wrapper: Some(Arc::new(TrackingWrapper)),
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
-        .load()
-        .await?;
-    let lance_dataset = Arc::new(lance_dataset);
+    // Run the query binary under strace
+    let output = Command::new("strace")
+        .env("LANCE_IO_THREADS", "32")
+        .args(&[
+            "-e",
+            "pread64,read,lseek,open,openat", // Trace read and open syscalls
+            "-T",                             // Show time spent in syscalls
+            "-tt",                            // Show absolute timestamps with microseconds
+            "-z",                             // Only show completed calls
+            "-o",
+            &strace_output_path, // Output to file
+            "-f",                // Follow forks
+            run_query_bin,       // The binary to trace
+            "--file-path",
+            file_path,
+            "--format",
+            format,
+            "--partitions",
+            &partitions.to_string(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
 
-    let lance_provider = LanceTableProvider::new(lance_dataset, false, false);
-
-    // Register the table
-    session_context
-        .register_table("lance_table", Arc::new(lance_provider))
-        .unwrap();
-
-    let make_df = || async {
-        let df = session_context.table("lance_table").await.unwrap();
-
-        let mut sum_exprs = Vec::new();
-        for i in 0..NUM_FIELDS {
-            sum_exprs.push(Expr::AggregateFunction(AggregateFunction::new_udf(
-                sum_udaf(),
-                vec![col(format!("value_{}", i))],
-                false,
-                None,
-                vec![],
-                None,
-            )));
-        }
-
-        df.aggregate(vec![], sum_exprs).unwrap()
-    };
-
-    let res = make_df()
-        .await
-        .explain(true, false)
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
-
-    for batch in res {
-        let plans = batch.column(1).as_string::<i32>();
-        println!("{}", plans.value(plans.len() - 1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() {
+        info!("Query stderr:\n{}", stderr);
     }
 
-    make_df().await.collect().await.unwrap();
-
-    // Clear the OS disk cache to ensure real I/O timing (only for local files)
-    if !lance_uri.contains("://") || lance_uri.starts_with("file://") {
-        info!("Clearing disk cache to measure real I/O performance");
-        clear_disk_cache()?;
-
-        // Add a small delay to ensure cache clearing has taken effect
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    if !output.status.success() {
+        return Err(format!("Query execution failed: {}", stderr).into());
     }
 
-    make_df().await.collect().await.unwrap();
+    // Print stdout from the query execution
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.is_empty() {
+        info!("Query output:\n{}", stdout);
+    }
 
-    // For Lance, we need to get requests from the tracking wrapper
-    // This is a simplified approach - in practice you'd need to store requests globally
-    Ok(vec![])
+    // Read strace output
+    let strace_output = tokio::fs::read_to_string(&strace_output_path)
+        .await
+        .unwrap_or_default();
+
+    println!("Strace output:\n{}", strace_output);
+
+    // Parse strace output
+    let requests = parse_strace_output(&strace_output);
+
+    Ok(requests)
 }
 
 async fn write_io_results(
@@ -644,34 +453,57 @@ async fn write_io_results(
     Ok(())
 }
 
+fn find_run_query_binary() -> Result<String, Box<dyn std::error::Error>> {
+    // Try to find the run_query binary in the same directory as the current executable
+    let current_exe = std::env::current_exe()?;
+    let current_dir = current_exe
+        .parent()
+        .ok_or("Cannot get executable directory")?;
+
+    let run_query_path = current_dir.join("run_query");
+    if run_query_path.exists() {
+        return Ok(run_query_path.to_string_lossy().to_string());
+    }
+
+    // Try in target/release directory (for development)
+    let target_release_path = Path::new("target/release/run_query");
+    if target_release_path.exists() {
+        return Ok(target_release_path.to_string_lossy().to_string());
+    }
+
+    // Try just "run_query" (hope it's in PATH)
+    Ok("run_query".to_string())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
 
-    info!("Starting row group I/O parallelism experiment");
+    info!("Starting row group I/O parallelism benchmark");
     info!(
         "Configuration: {} row groups, {} rows per group, {} partitions, format: {}, base_path: {}",
         args.num_row_groups, args.rows_per_group, args.partitions, args.format, args.base_path
     );
 
-    // Check if we can clear disk cache (only relevant for local file systems)
-    if !args.base_path.contains("://") || args.base_path.starts_with("file://") {
-        #[cfg(target_os = "linux")]
-        {
-            if std::fs::OpenOptions::new()
-                .write(true)
-                .open("/proc/sys/vm/drop_caches")
-                .is_err()
-            {
-                info!(
-                    "Note: For accurate I/O timing measurements, consider running with sudo privileges"
-                );
-                info!("This allows clearing the disk cache between runs to measure real disk I/O performance");
-            }
-        }
+    // Check if strace is available
+    let strace_check = Command::new("strace").arg("--version").output();
+    if strace_check.is_err() {
+        return Err(
+            "strace is not available. Please install strace to use this experiment.".into(),
+        );
     }
+
+    // Find the run_query binary
+    let run_query_bin = args.run_query_bin.unwrap_or_else(|| {
+        find_run_query_binary().unwrap_or_else(|_| {
+            eprintln!("Warning: Could not auto-detect run_query binary, using 'run_query'");
+            "run_query".to_string()
+        })
+    });
+
+    info!("Using run_query binary: {}", run_query_bin);
 
     let should_test_parquet = args.format == "parquet" || args.format == "both";
     let should_test_lance = args.format == "lance" || args.format == "both";
@@ -697,11 +529,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         create_synthetic_parquet_file(&parquet_uri, args.num_row_groups, args.rows_per_group)
             .await?;
 
-        // Run DataFusion query with tracking
-        let tracking_store = run_datafusion_parquet_query(&parquet_uri, args.partitions).await?;
+        // Run query with strace tracking
+        let requests =
+            run_query_with_strace(&run_query_bin, &parquet_uri, "parquet", args.partitions).await?;
 
-        // Get I/O requests and write to CSV
-        let requests = tracking_store.get_requests();
         info!("Recorded {} I/O requests for Parquet", requests.len());
 
         let parquet_output = if args.format == "both" {
@@ -720,8 +551,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         create_synthetic_lance_dataset(&lance_uri, args.num_row_groups, args.rows_per_group)
             .await?;
 
-        // Run DataFusion query with tracking
-        let requests = run_datafusion_lance_query(&lance_uri, args.partitions).await?;
+        // Run query with strace tracking
+        let requests =
+            run_query_with_strace(&run_query_bin, &lance_uri, "lance", args.partitions).await?;
 
         info!("Recorded {} I/O requests for Lance", requests.len());
 
@@ -733,6 +565,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         write_io_results(&requests, &lance_output).await?;
     }
 
-    info!("Experiment completed successfully");
+    info!("Benchmark completed successfully");
     Ok(())
 }

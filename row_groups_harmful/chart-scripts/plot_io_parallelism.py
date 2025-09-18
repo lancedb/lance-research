@@ -97,13 +97,15 @@ def create_io_timeline_plot(df, output_path, height_pixels=20):
         color = colormap(throughput_normalized)
 
         # Create rectangle for this I/O request
-        # Y-position represents the time when this read occurred
+        # Y-position represents the time when this read started
+        # Height represents the duration of the read
         y_position = time
+        height = row["duration_ns"] / 1e9  # Convert duration from nanoseconds to seconds
 
         rect = patches.Rectangle(
             (start_byte, y_position),  # (x, y) position
             end_byte - start_byte,  # width (byte range)
-            time_range * 0.02,  # height as small fraction of time range
+            height,  # height based on duration of the read
             linewidth=0.5,
             edgecolor="black",
             facecolor=color,
@@ -113,9 +115,14 @@ def create_io_timeline_plot(df, output_path, height_pixels=20):
 
     # Set up the plot
     ax.set_xlim(min_byte, max_byte)
+
+    # Calculate the end time of the latest read (start time + duration)
+    df["end_time"] = df["relative_time"] + (df["duration_ns"] / 1e9)
+    max_end_time = df["end_time"].max()
+
     ax.set_ylim(
         df["relative_time"].min() - time_range * 0.05,
-        df["relative_time"].max() + time_range * 0.05,
+        max_end_time + time_range * 0.05,
     )
 
     # Format x-axis to show byte positions in a readable format
