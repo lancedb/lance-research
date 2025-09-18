@@ -182,6 +182,7 @@ impl ObjectStore for TrackingObjectStore {
         location: &ObjectPath,
         options: GetOptions,
     ) -> object_store::Result<GetResult> {
+        println!("{:#?}", std::backtrace::Backtrace::force_capture());
         self.inner.get_opts(location, options).await
         // let start = Instant::now();
         // let range = match &options.range {
