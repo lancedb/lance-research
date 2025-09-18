@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -15,7 +16,8 @@ use datafusion::prelude::{col, Expr, ParquetReadOptions, SessionConfig, SessionC
 use futures::stream::BoxStream;
 use lance::datafusion::LanceTableProvider;
 use lance::dataset::builder::DatasetBuilder;
-use lance::dataset::WriteParams;
+use lance::dataset::{ReadParams, WriteParams};
+use lance::io::{ObjectStoreParams, WrappingObjectStore};
 use lance::Dataset;
 use lance_file::version::LanceFileVersion;
 use object_store::{
@@ -73,25 +75,18 @@ struct IoRequest {
     range_end: Option<u64>,
 }
 
-// Tracking wrapper around an ObjectStore
 #[derive(Debug)]
-struct TrackingObjectStore {
-    inner: Arc<dyn ObjectStore>,
+struct TrackedRequests {
     requests: Arc<Mutex<Vec<IoRequest>>>,
     start_time: Instant,
 }
 
-impl TrackingObjectStore {
-    fn new(inner: Arc<dyn ObjectStore>) -> Self {
+impl TrackedRequests {
+    fn new() -> Self {
         Self {
-            inner,
             requests: Arc::new(Mutex::new(Vec::new())),
             start_time: Instant::now(),
         }
-    }
-
-    fn get_requests(&self) -> Vec<IoRequest> {
-        self.requests.lock().unwrap().clone()
     }
 
     fn record_request(&self, path: &str, range: Option<(u64, u64)>, duration: u64) {
@@ -108,6 +103,30 @@ impl TrackingObjectStore {
         };
 
         self.requests.lock().unwrap().push(request);
+    }
+
+    fn get_requests(&self) -> Vec<IoRequest> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+// Tracking wrapper around an ObjectStore
+#[derive(Debug)]
+struct TrackingObjectStore {
+    inner: Arc<dyn ObjectStore>,
+    tracked_requests: Arc<TrackedRequests>,
+}
+
+impl TrackingObjectStore {
+    fn new(inner: Arc<dyn ObjectStore>, tracked_requests: Arc<TrackedRequests>) -> Self {
+        Self {
+            inner,
+            tracked_requests,
+        }
+    }
+
+    fn record_request(&self, path: &str, range: Option<(u64, u64)>, duration: u64) {
+        self.tracked_requests.record_request(path, range, duration);
     }
 }
 
@@ -214,6 +233,19 @@ impl ObjectStore for TrackingObjectStore {
     }
 }
 
+#[derive(Debug)]
+struct TrackingStoreWrapper(Arc<TrackedRequests>);
+
+impl WrappingObjectStore for TrackingStoreWrapper {
+    fn wrap(
+        &self,
+        original: Arc<dyn ObjectStore>,
+        _storage_options: Option<&HashMap<String, String>>,
+    ) -> Arc<dyn ObjectStore> {
+        Arc::new(TrackingObjectStore::new(original, self.0.clone()))
+    }
+}
+
 fn create_synthetic_data(
     rows_per_batch: usize,
     num_batches: usize,
@@ -260,7 +292,6 @@ async fn create_synthetic_lance_dataset_s3(
     s3_uri: &str,
     num_row_groups: usize,
     rows_per_group: usize,
-    _object_store: Arc<dyn ObjectStore>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!(
         "Creating synthetic lance dataset with {} rows at {}",
@@ -394,7 +425,7 @@ async fn run_parquet_query_s3(
 async fn run_lance_query_s3(
     s3_uri: &str,
     partitions: usize,
-    _object_store: Arc<dyn ObjectStore>,
+    tracked_requests: Arc<TrackedRequests>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!(
         "Running DataFusion Lance query with {} partitions on S3",
@@ -408,7 +439,16 @@ async fn run_lance_query_s3(
     );
 
     // Create Lance dataset - it will use default S3 credentials from environment
-    let lance_dataset = DatasetBuilder::from_uri(s3_uri).load().await?;
+    let lance_dataset = DatasetBuilder::from_uri(s3_uri)
+        .with_read_params(ReadParams {
+            store_options: Some(ObjectStoreParams {
+                object_store_wrapper: Some(Arc::new(TrackingStoreWrapper(tracked_requests))),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .load()
+        .await?;
     let lance_dataset = Arc::new(lance_dataset);
 
     let lance_provider = LanceTableProvider::new(lance_dataset, false, false);
@@ -532,7 +572,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Set up S3 object store
     let s3_store = setup_s3_object_store(&args.s3_uri, args.region).await?;
-    let tracking_store = Arc::new(TrackingObjectStore::new(s3_store));
+    let tracked_requests = Arc::new(TrackedRequests::new());
 
     let should_test_parquet = args.format == "parquet" || args.format == "both";
     let should_test_lance = args.format == "lance" || args.format == "both";
@@ -559,17 +599,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &parquet_uri,
             args.num_row_groups,
             args.rows_per_group,
-            tracking_store.clone(),
+            s3_store.clone(),
         )
         .await?;
 
+        let tracking_store = Arc::new(TrackingObjectStore::new(s3_store, tracked_requests.clone()));
+
         // Reset tracking for the query portion
-        let query_tracking_store = Arc::new(TrackingObjectStore::new(tracking_store.inner.clone()));
+        let query_tracking_store = Arc::new(TrackingObjectStore::new(
+            tracking_store.inner.clone(),
+            tracked_requests.clone(),
+        ));
 
         // Run query
         run_parquet_query_s3(&parquet_uri, args.partitions, query_tracking_store.clone()).await?;
 
-        let requests = query_tracking_store.get_requests();
+        let requests = tracked_requests.get_requests();
         info!("Recorded {} I/O requests for Parquet", requests.len());
 
         let parquet_output = if args.format == "both" {
@@ -585,21 +630,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("=== Testing Lance Format on S3 ===");
 
         // Generate synthetic lance dataset
-        create_synthetic_lance_dataset_s3(
-            &lance_uri,
-            args.num_row_groups,
-            args.rows_per_group,
-            tracking_store.clone(),
-        )
-        .await?;
-
-        // Reset tracking for the query portion
-        let query_tracking_store = Arc::new(TrackingObjectStore::new(tracking_store.inner.clone()));
+        create_synthetic_lance_dataset_s3(&lance_uri, args.num_row_groups, args.rows_per_group)
+            .await?;
 
         // Run query
-        run_lance_query_s3(&lance_uri, args.partitions, query_tracking_store.clone()).await?;
+        run_lance_query_s3(&lance_uri, args.partitions, tracked_requests.clone()).await?;
 
-        let requests = query_tracking_store.get_requests();
+        let requests = tracked_requests.get_requests();
         info!("Recorded {} I/O requests for Lance", requests.len());
 
         let lance_output = if args.format == "both" {
