@@ -671,14 +671,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if should_test_parquet {
         info!("=== Testing Parquet Format on S3 ===");
 
-        // Generate synthetic parquet file
-        create_synthetic_parquet_file_s3(
-            &parquet_uri,
-            args.num_row_groups,
-            args.rows_per_group,
-            s3_store.clone(),
-        )
-        .await?;
+        // Check if parquet file already exists
+        let (_, parquet_path) = object_store::parse_url(&url::Url::parse(&parquet_uri)?)?;
+        let file_exists = s3_store.head(&parquet_path).await.is_ok();
+
+        if !file_exists {
+            info!("Parquet file doesn't exist, creating synthetic parquet file");
+            create_synthetic_parquet_file_s3(
+                &parquet_uri,
+                args.num_row_groups,
+                args.rows_per_group,
+                s3_store.clone(),
+            )
+            .await?;
+        } else {
+            info!("Parquet file already exists, skipping creation");
+        }
 
         let tracking_store = Arc::new(TrackingObjectStore::new(s3_store, tracked_requests.clone()));
 
