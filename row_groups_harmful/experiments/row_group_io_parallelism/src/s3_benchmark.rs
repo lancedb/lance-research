@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -15,7 +14,7 @@ use datafusion::functions_aggregate::sum::sum_udaf;
 use datafusion::logical_expr::expr::AggregateFunction;
 use datafusion::prelude::{col, Expr, ParquetReadOptions, SessionConfig, SessionContext};
 use futures::stream::BoxStream;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use lance::datafusion::LanceTableProvider;
 use lance::dataset::builder::DatasetBuilder;
 use lance::dataset::{ReadParams, WriteParams};
@@ -29,6 +28,7 @@ use object_store::{
 use object_store::{GetRange, GetResultPayload};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::{WriterProperties, WriterVersion};
+use pin_project::pin_project;
 use rand::Rng;
 use tempfile;
 use tokio::fs::File;
@@ -113,6 +113,53 @@ impl TrackedRequests {
     }
 }
 
+#[pin_project]
+pub struct FinallyStream<S: Stream, F: FnOnce()> {
+    #[pin]
+    stream: S,
+    f: Option<F>,
+}
+
+impl<S: Stream, F: FnOnce()> FinallyStream<S, F> {
+    pub fn new(stream: S, f: F) -> Self {
+        Self { stream, f: Some(f) }
+    }
+}
+
+impl<S: Stream, F: FnOnce()> Stream for FinallyStream<S, F> {
+    type Item = S::Item;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.project();
+        let res = this.stream.poll_next(cx);
+        if matches!(res, std::task::Poll::Ready(None)) {
+            // It's possible that None is polled multiple times, but we only call the function once
+            if let Some(f) = this.f.take() {
+                f();
+            }
+        }
+        res
+    }
+}
+
+pub trait FinallyStreamExt<S: Stream>: Stream + Sized {
+    fn finally<F: FnOnce()>(self, f: F) -> FinallyStream<Self, F> {
+        FinallyStream {
+            stream: self,
+            f: Some(f),
+        }
+    }
+}
+
+impl<S: Stream> FinallyStreamExt<S> for S {
+    fn finally<F: FnOnce()>(self, f: F) -> FinallyStream<Self, F> {
+        FinallyStream::new(self, f)
+    }
+}
+
 // Tracking wrapper around an ObjectStore
 #[derive(Debug)]
 struct TrackingObjectStore {
@@ -182,45 +229,34 @@ impl ObjectStore for TrackingObjectStore {
         location: &ObjectPath,
         options: GetOptions,
     ) -> object_store::Result<GetResult> {
-        println!("{:#?}", std::backtrace::Backtrace::force_capture());
-        self.inner.get_opts(location, options).await
-        // let start = Instant::now();
-        // let range = match &options.range {
-        //     Some(GetRange::Bounded(range)) => Some((range.start, range.end)),
-        //     None => {
-        //         return self.inner.get_opts(location, options).await;
-        //     }
-        //     _ => unimplemented!(),
-        // };
-        // let result = self.inner.get_opts(location, options).await?;
-        // let first = AtomicBool::new(false);
-        // let location = location.clone();
-        // let tracked_requests = self.tracked_requests.clone();
-        // match result.payload {
-        //     GetResultPayload::File(_, _) => unimplemented!(),
-        //     GetResultPayload::Stream(stream) => {
-        //         let tracked_stream = stream
-        //             .map(move |result| {
-        //                 let result = result?;
-        //                 let duration = start.elapsed().as_nanos() as u64;
-        //                 tracked_requests.record_request(&location.to_string(), range, duration);
-        //                 if !first
-        //                     .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-        //                     .is_ok()
-        //                 {
-        //                     panic!("Stream returned multiple values");
-        //                 }
-        //                 Ok(result)
-        //             })
-        //             .boxed();
-        //         Ok(GetResult {
-        //             payload: GetResultPayload::Stream(tracked_stream),
-        //             meta: result.meta,
-        //             range: result.range,
-        //             attributes: result.attributes,
-        //         })
-        //     }
-        // }
+        let start = Instant::now();
+        let range = match &options.range {
+            Some(GetRange::Bounded(range)) => Some((range.start, range.end)),
+            None => {
+                return self.inner.get_opts(location, options).await;
+            }
+            _ => unimplemented!(),
+        };
+        let result = self.inner.get_opts(location, options).await?;
+        let location = location.clone();
+        let tracked_requests = self.tracked_requests.clone();
+        match result.payload {
+            GetResultPayload::File(_, _) => unimplemented!(),
+            GetResultPayload::Stream(stream) => {
+                let tracked_stream = stream
+                    .finally(move || {
+                        let duration = start.elapsed().as_nanos() as u64;
+                        tracked_requests.record_request(&location.to_string(), range, duration);
+                    })
+                    .boxed();
+                Ok(GetResult {
+                    payload: GetResultPayload::Stream(tracked_stream),
+                    meta: result.meta,
+                    range: result.range,
+                    attributes: result.attributes,
+                })
+            }
+        }
     }
 
     async fn get_range(

@@ -45,3 +45,4 @@ regex = "1.0"
 utilities = { path = "../../utilities" }
 aws-config = "1.0"
 aws-sdk-s3 = "1.0"
+pin-project = "1.0"
