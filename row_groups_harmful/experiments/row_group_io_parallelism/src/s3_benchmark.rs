@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -14,6 +15,7 @@ use datafusion::functions_aggregate::sum::sum_udaf;
 use datafusion::logical_expr::expr::AggregateFunction;
 use datafusion::prelude::{col, Expr, ParquetReadOptions, SessionConfig, SessionContext};
 use futures::stream::BoxStream;
+use futures::StreamExt;
 use lance::datafusion::LanceTableProvider;
 use lance::dataset::builder::DatasetBuilder;
 use lance::dataset::{ReadParams, WriteParams};
@@ -24,6 +26,7 @@ use object_store::{
     path::Path as ObjectPath, GetOptions, GetResult, ListResult, ObjectMeta, ObjectStore,
     PutOptions, PutPayload, PutResult,
 };
+use object_store::{GetRange, GetResultPayload};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::{WriterProperties, WriterVersion};
 use rand::Rng;
@@ -176,10 +179,43 @@ impl ObjectStore for TrackingObjectStore {
 
     async fn get_opts(
         &self,
-        _location: &ObjectPath,
-        _options: GetOptions,
+        location: &ObjectPath,
+        options: GetOptions,
     ) -> object_store::Result<GetResult> {
-        unimplemented!()
+        let start = Instant::now();
+        let range = match &options.range {
+            Some(GetRange::Bounded(range)) => Some((range.start, range.end)),
+            _ => unimplemented!(),
+        };
+        let result = self.inner.get_opts(location, options).await?;
+        let first = AtomicBool::new(false);
+        let location = location.clone();
+        let tracked_requests = self.tracked_requests.clone();
+        match result.payload {
+            GetResultPayload::File(_, _) => unimplemented!(),
+            GetResultPayload::Stream(stream) => {
+                let tracked_stream = stream
+                    .map(move |result| {
+                        let result = result?;
+                        let duration = start.elapsed().as_nanos() as u64;
+                        tracked_requests.record_request(&location.to_string(), range, duration);
+                        if !first
+                            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                            .is_ok()
+                        {
+                            panic!("Stream returned multiple values");
+                        }
+                        Ok(result)
+                    })
+                    .boxed();
+                Ok(GetResult {
+                    payload: GetResultPayload::Stream(tracked_stream),
+                    meta: result.meta,
+                    range: result.range,
+                    attributes: result.attributes,
+                })
+            }
+        }
     }
 
     async fn get_range(
