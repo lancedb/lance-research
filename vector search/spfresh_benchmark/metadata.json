@@ -1,0 +1,25 @@
+{
+  "lance_version": "9.0.0",
+  "source": "sift/sift_base.fvecs",
+  "source_rows": 1000000,
+  "vector_dimension": 128,
+  "vector_dtype": "float32",
+  "initial_write_seconds": 0.15723466700001154,
+  "initial_index_seconds": 4.47976641599962,
+  "initial_index_vectors_per_second": 178580.73964365106,
+  "arguments": {
+    "sift_base": "sift/sift_base.fvecs",
+    "work_dir": "spfresh_benchmark",
+    "initial_rows": 800000,
+    "steps": 5,
+    "append_rows": 20000,
+    "update_rows": 20000,
+    "initial_write_batch_rows": 100000,
+    "num_partitions": 256,
+    "num_sub_vectors": 16,
+    "spfresh_merge_indices": 1,
+    "approach": "both",
+    "overwrite": false
+  },
+  "warning": "1B timing is a linear extrapolation from SIFT1M, not a 1B run."
+}

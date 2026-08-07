@@ -1,0 +1,17 @@
+# macOS metadata
+.DS_Store
+
+# Python-generated files and local environments
+__pycache__/
+*.py[cod]
+.venv/
+
+# Downloaded SIFT1M dataset and archive
+/vector search/sift/
+/vector search/sift.tar.gz
+
+# Generated Lance datasets and indexes
+/vector search/benchmark.lance/
+/vector search/spfresh_benchmark/baseline/
+/vector search/spfresh_benchmark/reindex/
+/vector search/spfresh_benchmark/spfresh/
