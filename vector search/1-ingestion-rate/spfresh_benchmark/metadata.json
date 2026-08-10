@@ -1,0 +1,29 @@
+{
+  "lance_version": "10.0.0",
+  "source": "/Users/jasonzheng/Desktop/jason weston benchmarking project/vector search/sift/sift_base.fvecs",
+  "source_rows": 1000000,
+  "vector_dimension": 128,
+  "vector_dtype": "float32",
+  "initial_write_seconds": 0.12,
+  "initial_index_seconds": 4.108,
+  "initial_index_vectors_per_second": 194746.581,
+  "partition_policy": "max(1, int(min(num_rows / target_partition_size, sqrt(num_rows))))",
+  "arguments": {
+    "sift_base": "/Users/jasonzheng/Desktop/jason weston benchmarking project/vector search/sift/sift_base.fvecs",
+    "work_dir": "/Users/jasonzheng/Desktop/jason weston benchmarking project/vector search/1-ingestion-rate/spfresh_benchmark",
+    "initial_rows": 800000,
+    "queries": 150,
+    "append_rows": 1000,
+    "update_rows": 250,
+    "initial_write_batch_rows": 100000,
+    "target_partition_size": 4096,
+    "num_sub_vectors": 16,
+    "maintenance_every": 30,
+    "spfresh_merge_indices": 1,
+    "recall_k": 10,
+    "recall_nprobes": 16,
+    "recall_refine_factor": 5,
+    "approach": "both"
+  },
+  "warning": "1B timing is a linear extrapolation from SIFT1M, not a 1B run."
+}
