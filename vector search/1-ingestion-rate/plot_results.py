@@ -238,6 +238,42 @@ def save_ingestion_rates_plot(
     plt.close(figure)
 
 
+def save_cumulative_indexing_time_plot(
+    results: pd.DataFrame, output: Path
+) -> None:
+    """Plot cumulative maintenance time against experiment ingestion progress."""
+    figure, axis = plt.subplots(figsize=(11, 6))
+    for approach, group in approach_groups(results):
+        changed = group["appended_rows"] + group["updated_rows"]
+        total_changed = changed.sum()
+        ingestion_percent = changed.cumsum() / total_changed * 100
+        cumulative_indexing_seconds = group["maintenance_seconds"].cumsum()
+
+        # Include the experiment origin so the staircase begins at 0% / 0s.
+        x = pd.concat(
+            [pd.Series([0.0]), ingestion_percent.reset_index(drop=True)],
+            ignore_index=True,
+        )
+        y = pd.concat(
+            [pd.Series([0.0]), cumulative_indexing_seconds.reset_index(drop=True)],
+            ignore_index=True,
+        )
+        axis.step(
+            x,
+            y,
+            where="post",
+            color=COLORS.get(approach),
+            linewidth=2,
+            label=approach,
+        )
+
+    axis.set_title("Cumulative index-maintenance time vs. rows ingested")
+    axis.set_xlabel("Rows ingested (% of experiment total)")
+    axis.set_ylabel("Cumulative indexing time (seconds)")
+    axis.set_xlim(0, 100)
+    finish_plot(figure, axis, output)
+
+
 def save_freshness_plot(results: pd.DataFrame, output: Path) -> None:
     figure, axis = plt.subplots(figsize=(11, 6))
     minimum_freshness = 100.0
@@ -318,6 +354,7 @@ def main() -> None:
         "maintenance": output_dir / "maintenance_time.png",
         "amortized": output_dir / "amortized_system_cost.png",
         "ingestion": output_dir / "ingestion_rates.png",
+        "cumulative_indexing": output_dir / "cumulative_indexing_time.png",
         "freshness": output_dir / "index_freshness.png",
         "partitions": output_dir / "ivf_partitions.png",
     }
@@ -335,6 +372,9 @@ def main() -> None:
     )
     save_ingestion_rates_plot(
         results, outputs["ingestion"], args.amortization_window
+    )
+    save_cumulative_indexing_time_plot(
+        results, outputs["cumulative_indexing"]
     )
     save_freshness_plot(results, outputs["freshness"])
     save_partitions_plot(results, outputs["partitions"])
