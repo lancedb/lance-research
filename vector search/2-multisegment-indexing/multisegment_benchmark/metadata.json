@@ -1,0 +1,39 @@
+{
+  "experiment": "multi-segment vs single-segment IVF-PQ",
+  "arguments": {
+    "base_vectors": "/Users/jasonzheng/Desktop/jason weston benchmarking project/vector search/sift/sift_base.fvecs",
+    "query_vectors": "/Users/jasonzheng/Desktop/jason weston benchmarking project/vector search/sift/sift_query.fvecs",
+    "ground_truth": "/Users/jasonzheng/Desktop/jason weston benchmarking project/vector search/sift/sift_groundtruth.ivecs",
+    "ground_truth_mode": "auto",
+    "work_dir": "/Users/jasonzheng/Desktop/jason weston benchmarking project/vector search/2-multisegment-indexing/multisegment_benchmark",
+    "rows": 1000000,
+    "segment_counts": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "data_fragments": 60,
+    "write_batch_rows": 100000,
+    "target_partition_size": 4096,
+    "num_sub_vectors": 16,
+    "queries": 100,
+    "warmup_queries": 10,
+    "repetitions": 5,
+    "recall_k": 10,
+    "nprobes": 16,
+    "refine_factor": 5
+  },
+  "ground_truth_source": "file",
+  "data_write_seconds": 0.198,
+  "actual_data_fragments": 60,
+  "timing": "ANN latency uses perf_counter_ns around Lance query execution and result materialization; build_wall_seconds uses perf_counter; build_cpu_seconds uses process_time.",
+  "environment": {
+    "python": "3.14.6",
+    "lance": "10.0.0",
+    "numpy": "2.5.1",
+    "pyarrow": "25.0.0",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O"
+  }
+}
