@@ -1,0 +1,68 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File (.venv)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "cwd": "${fileDirname}",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: ingestion-rate benchmark",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/vector search/1-ingestion-rate/attempt_1.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/vector search/1-ingestion-rate",
+            "args": [
+                "--queries",
+                "150",
+                "--maintenance-every",
+                "30",
+                "--target-partition-size",
+                "4096",
+                "--recall-k",
+                "10",
+                "--recall-nprobes",
+                "16",
+                "--recall-refine-factor",
+                "5"
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "Python: multi-segment benchmark (smoke)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/vector search/2-multisegment-indexing/attempt_1.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/vector search/2-multisegment-indexing",
+            "args": [
+                "--rows",
+                "10000",
+                "--segment-counts",
+                "1,2,3,4,5",
+                "--index-types",
+                "IVF_PQ,IVF_HNSW_PQ,IVF_HNSW_SQ",
+                "--data-fragments",
+                "10",
+                "--build-workers",
+                "0",
+                "--queries",
+                "5",
+                "--warmup-queries",
+                "2",
+                "--repetitions",
+                "2",
+                "--ground-truth-mode",
+                "exact",
+                "--work-dir",
+                "${workspaceFolder}/vector search/2-multisegment-indexing/multisegment_smoke"
+            ],
+            "justMyCode": false
+        }
+    ]
+}

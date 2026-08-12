@@ -18,6 +18,7 @@
     "write_batch_rows": 100000,
     "target_partition_size": 4096,
     "num_sub_vectors": 16,
+    "build_workers": 0,
     "queries": 100,
     "warmup_queries": 10,
     "repetitions": 5,
@@ -26,9 +27,9 @@
     "refine_factor": 5
   },
   "ground_truth_source": "file",
-  "data_write_seconds": 0.198,
+  "data_write_seconds": 0.24,
   "actual_data_fragments": 60,
-  "timing": "ANN latency uses perf_counter_ns around Lance query execution and result materialization; build_wall_seconds uses perf_counter; build_cpu_seconds uses process_time.",
+  "timing": "ANN latency uses perf_counter_ns around Lance query execution and result materialization; build_wall_seconds covers concurrent segment construction plus commit using perf_counter; build_cpu_seconds uses process_time; segment_build_seconds_sum sums each worker's elapsed build duration.",
   "environment": {
     "python": "3.14.6",
     "lance": "10.0.0",

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Benchmark one logical Lance IVF-PQ index with 1 through 5 segments.
+"""Benchmark Lance vector-index families with 1 through 5 segments.
 
 The dataset and query workload stay fixed.  For each requested segment count,
 the script divides the dataset's immutable fragments into disjoint groups,
-builds one independently trained IVF-PQ segment per group with Lance's
-distributed-index API, commits those physical segments as one logical index,
-and runs the same query/repetition matrix.
+builds one independently trained segment per group with Lance's distributed-
+index API for each requested index family, commits those physical
+segments as one logical index,
+and runs the same query/repetition matrix. Segment builds run concurrently by
+default so the benchmark measures the intended construction-time scale-out.
 
 The bundled SIFT1M data is a practical local-scale default.  A genuine 5B run
 requires a 5B-vector fvecs file plus compatible query and ground-truth files.
@@ -26,6 +28,7 @@ import os
 import platform
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -47,10 +50,19 @@ VECTOR_COLUMN = "vector"
 ID_COLUMN = "id"
 INDEX_NAME = "vector_idx"
 OUTPUT_DECIMAL_PLACES = 3
+SUPPORTED_INDEX_TYPES = ("IVF_PQ", "IVF_HNSW_PQ", "IVF_HNSW_SQ")
+INDEX_TYPE_ALIASES = {
+    "IVF-PQ": "IVF_PQ",
+    "IVF-PQ-HNSW": "IVF_HNSW_PQ",
+    "IVF_HNSW-PQ": "IVF_HNSW_PQ",
+    "IVF-HNSW-PQ": "IVF_HNSW_PQ",
+    "IVF-HNSW-SQ": "IVF_HNSW_SQ",
+}
 
 
 @dataclass
 class QueryResult:
+    index_type: str
     segment_count: int
     actual_segment_count: int
     query_number: int
@@ -60,8 +72,14 @@ class QueryResult:
     rows_per_segment_min: int
     rows_per_segment_max: int
     total_ivf_partitions: int
+    index_size_bytes: int
+    build_workers: int
     build_wall_seconds: float
     build_cpu_seconds: float
+    segment_build_seconds_sum: float
+    segment_build_seconds_max: float
+    commit_wall_seconds: float
+    build_vectors_per_second: float
     recall_k: int
     recall_at_k: float
     precision_at_k: float
@@ -69,6 +87,7 @@ class QueryResult:
     query_throughput_qps: float
     nprobes: int
     refine_factor: int
+    hnsw_ef: int
 
 
 def parse_segment_counts(value: str) -> list[int]:
@@ -83,6 +102,25 @@ def parse_segment_counts(value: str) -> list[int]:
     if len(counts) != len(set(counts)):
         raise argparse.ArgumentTypeError("segment counts cannot contain duplicates")
     return counts
+
+
+def parse_index_types(value: str) -> list[str]:
+    index_types = []
+    for item in value.split(","):
+        normalized = item.strip().upper()
+        if not normalized:
+            continue
+        normalized = INDEX_TYPE_ALIASES.get(normalized, normalized)
+        if normalized not in SUPPORTED_INDEX_TYPES:
+            raise argparse.ArgumentTypeError(
+                f"Supported index types: {', '.join(SUPPORTED_INDEX_TYPES)}"
+            )
+        index_types.append(normalized)
+    if not index_types:
+        raise argparse.ArgumentTypeError("At least one index type is required")
+    if len(index_types) != len(set(index_types)):
+        raise argparse.ArgumentTypeError("Index types cannot contain duplicates")
+    return index_types
 
 
 def parse_args() -> argparse.Namespace:
@@ -112,6 +150,12 @@ def parse_args() -> argparse.Namespace:
         default=parse_segment_counts("1,2,3,4,5"),
     )
     parser.add_argument(
+        "--index-types",
+        type=parse_index_types,
+        default=parse_index_types("IVF_PQ,IVF_HNSW_PQ,IVF_HNSW_SQ"),
+        help="Comma-separated Lance index families to compare.",
+    )
+    parser.add_argument(
         "--data-fragments",
         type=int,
         default=60,
@@ -120,6 +164,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--write-batch-rows", type=int, default=100_000)
     parser.add_argument("--target-partition-size", type=int, default=4096)
     parser.add_argument("--num-sub-vectors", type=int, default=16)
+    parser.add_argument("--hnsw-m", type=int, default=20)
+    parser.add_argument("--hnsw-ef-construction", type=int, default=300)
+    parser.add_argument("--hnsw-ef", type=int, default=100)
+    parser.add_argument(
+        "--build-workers",
+        type=int,
+        default=0,
+        help=(
+            "Concurrent segment-build workers. 0 uses one worker per segment, "
+            "which models distributed scale-out; 1 forces sequential builds."
+        ),
+    )
     parser.add_argument("--queries", type=int, default=100)
     parser.add_argument("--warmup-queries", type=int, default=10)
     parser.add_argument("--repetitions", type=int, default=5)
@@ -159,6 +215,9 @@ def validate_args(
         "write_batch_rows": args.write_batch_rows,
         "target_partition_size": args.target_partition_size,
         "num_sub_vectors": args.num_sub_vectors,
+        "hnsw_m": args.hnsw_m,
+        "hnsw_ef_construction": args.hnsw_ef_construction,
+        "hnsw_ef": args.hnsw_ef,
         "queries": args.queries,
         "repetitions": args.repetitions,
         "recall_k": args.recall_k,
@@ -170,6 +229,8 @@ def validate_args(
             raise ValueError(f"--{name.replace('_', '-')} must be positive")
     if args.warmup_queries < 0:
         raise ValueError("--warmup-queries cannot be negative")
+    if args.build_workers < 0:
+        raise ValueError("--build-workers cannot be negative")
     if args.rows > len(base_vectors):
         raise ValueError(
             f"Requested {args.rows:,} rows but {args.base_vectors} has only "
@@ -264,33 +325,70 @@ def drop_current_index(dataset_path: Path) -> lance.LanceDataset:
 
 
 def build_segmented_index(
-    dataset_path: Path, segment_count: int, args: argparse.Namespace
+    dataset_path: Path,
+    index_type: str,
+    segment_count: int,
+    args: argparse.Namespace,
 ) -> dict[str, int | float]:
     dataset = drop_current_index(dataset_path)
     groups, group_rows = fragment_groups(dataset, segment_count)
-    built_segments = []
-    print(f"\nBuilding {segment_count} independently trained IVF-PQ segment(s)...")
-    wall_started = time.perf_counter()
-    cpu_started = time.process_time()
+    worker_count = min(args.build_workers or segment_count, segment_count)
+    print(
+        f"\nBuilding {segment_count} independently trained {index_type} segment(s) "
+        f"with {worker_count} concurrent worker(s)..."
+    )
     for number, fragment_ids in enumerate(groups, start=1):
         print(
             f"  segment {number}/{segment_count}: "
             f"{len(fragment_ids)} fragments, {group_rows[number - 1]:,} rows"
         )
-        built_segments.append(
-            dataset.create_index_uncommitted(
-                VECTOR_COLUMN,
-                index_type="IVF_PQ",
-                name=INDEX_NAME,
-                metric="L2",
-                fragment_ids=fragment_ids,
-                target_partition_size=args.target_partition_size,
-                num_sub_vectors=args.num_sub_vectors,
+
+    def build_one(number: int, fragment_ids: list[int]):
+        worker_dataset = lance.dataset(dataset_path)
+        index_options = {
+            "target_partition_size": args.target_partition_size,
+        }
+        if "PQ" in index_type:
+            index_options["num_sub_vectors"] = args.num_sub_vectors
+        if "HNSW" in index_type:
+            index_options.update(
+                {
+                    "m": args.hnsw_m,
+                    "ef_construction": args.hnsw_ef_construction,
+                }
             )
+        started = time.perf_counter()
+        segment = worker_dataset.create_index_uncommitted(
+            VECTOR_COLUMN,
+            index_type=index_type,
+            name=INDEX_NAME,
+            metric="L2",
+            fragment_ids=fragment_ids,
+            **index_options,
         )
+        return number, segment, time.perf_counter() - started
+
+    wall_started = time.perf_counter()
+    cpu_started = time.process_time()
+    completed = []
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [
+            executor.submit(build_one, number, fragment_ids)
+            for number, fragment_ids in enumerate(groups, start=1)
+        ]
+        for future in as_completed(futures):
+            number, segment, seconds = future.result()
+            completed.append((number, segment, seconds))
+            print(f"  segment {number}/{segment_count} built in {seconds:.3f}s")
+
+    completed.sort(key=lambda item: item[0])
+    built_segments = [item[1] for item in completed]
+    segment_build_seconds = [item[2] for item in completed]
+    commit_started = time.perf_counter()
     dataset.commit_existing_index_segments(
         INDEX_NAME, VECTOR_COLUMN, built_segments
     )
+    commit_wall_seconds = time.perf_counter() - commit_started
     build_cpu_seconds = time.process_time() - cpu_started
     build_wall_seconds = time.perf_counter() - wall_started
 
@@ -318,8 +416,14 @@ def build_segmented_index(
         "rows_per_segment_min": min(group_rows),
         "rows_per_segment_max": max(group_rows),
         "total_ivf_partitions": total_partitions,
+        "index_size_bytes": int(description.total_size_bytes),
+        "build_workers": worker_count,
         "build_wall_seconds": build_wall_seconds,
         "build_cpu_seconds": build_cpu_seconds,
+        "segment_build_seconds_sum": sum(segment_build_seconds),
+        "segment_build_seconds_max": max(segment_build_seconds),
+        "commit_wall_seconds": commit_wall_seconds,
+        "build_vectors_per_second": args.rows / build_wall_seconds,
     }
 
 
@@ -373,6 +477,7 @@ def load_ground_truth(
 
 def run_queries(
     dataset_path: Path,
+    index_type: str,
     segment_count: int,
     build: dict[str, int | float],
     queries: np.ndarray,
@@ -386,6 +491,8 @@ def run_queries(
         "nprobes": args.nprobes,
         "refine_factor": args.refine_factor,
     }
+    if "HNSW" in index_type:
+        nearest_common["ef"] = args.hnsw_ef
     for query in queries[: args.warmup_queries]:
         dataset.to_table(
             columns=[ID_COLUMN],
@@ -412,6 +519,7 @@ def run_queries(
             overlap = len(returned & truth[query_index])
             results.append(
                 QueryResult(
+                    index_type=index_type,
                     segment_count=segment_count,
                     actual_segment_count=int(build["actual_segment_count"]),
                     query_number=int(query_index) + 1,
@@ -421,8 +529,20 @@ def run_queries(
                     rows_per_segment_min=int(build["rows_per_segment_min"]),
                     rows_per_segment_max=int(build["rows_per_segment_max"]),
                     total_ivf_partitions=int(build["total_ivf_partitions"]),
+                    index_size_bytes=int(build["index_size_bytes"]),
+                    build_workers=int(build["build_workers"]),
                     build_wall_seconds=float(build["build_wall_seconds"]),
                     build_cpu_seconds=float(build["build_cpu_seconds"]),
+                    segment_build_seconds_sum=float(
+                        build["segment_build_seconds_sum"]
+                    ),
+                    segment_build_seconds_max=float(
+                        build["segment_build_seconds_max"]
+                    ),
+                    commit_wall_seconds=float(build["commit_wall_seconds"]),
+                    build_vectors_per_second=float(
+                        build["build_vectors_per_second"]
+                    ),
                     recall_k=args.recall_k,
                     recall_at_k=overlap / args.recall_k,
                     precision_at_k=overlap / max(1, len(returned)),
@@ -430,10 +550,11 @@ def run_queries(
                     query_throughput_qps=1000 / latency_ms,
                     nprobes=args.nprobes,
                     refine_factor=args.refine_factor,
+                    hnsw_ef=args.hnsw_ef,
                 )
             )
         print(
-            f"  segments={segment_count} repetition={repetition}/"
+            f"  index={index_type} segments={segment_count} repetition={repetition}/"
             f"{args.repetitions} complete"
         )
     return results
@@ -458,19 +579,43 @@ def write_results(path: Path, results: list[QueryResult]) -> None:
 
 def summarize(results: list[QueryResult]) -> list[dict[str, int | float]]:
     summaries = []
-    for segment_count in sorted({result.segment_count for result in results}):
-        selected = [r for r in results if r.segment_count == segment_count]
-        latencies = np.asarray([r.ann_query_ms for r in selected])
-        recalls = np.asarray([r.recall_at_k for r in selected])
-        first = selected[0]
-        summaries.append(
-            {
+    for index_type in sorted({result.index_type for result in results}):
+        type_results = [r for r in results if r.index_type == index_type]
+        baseline_candidates = [r for r in type_results if r.segment_count == 1]
+        baseline_build_wall = (
+            baseline_candidates[0].build_wall_seconds
+            if baseline_candidates
+            else min(
+                type_results, key=lambda result: result.segment_count
+            ).build_wall_seconds
+        )
+        for segment_count in sorted({result.segment_count for result in type_results}):
+            selected = [
+                r for r in type_results if r.segment_count == segment_count
+            ]
+            latencies = np.asarray([r.ann_query_ms for r in selected])
+            recalls = np.asarray([r.recall_at_k for r in selected])
+            first = selected[0]
+            summaries.append(
+                {
+                "index_type": index_type,
                 "segments": segment_count,
                 "rows": first.rows,
                 "queries_measured": len(selected),
                 "partitions": first.total_ivf_partitions,
+                "index_size_mb": first.index_size_bytes / (1024 * 1024),
+                "build_workers": first.build_workers,
+                "max_worker_rows": first.rows_per_segment_max,
+                "working_set_reduction": first.rows / first.rows_per_segment_max,
                 "build_wall_s": first.build_wall_seconds,
                 "build_cpu_s": first.build_cpu_seconds,
+                "worker_time_sum_s": first.segment_build_seconds_sum,
+                "worker_time_max_s": first.segment_build_seconds_max,
+                "commit_s": first.commit_wall_seconds,
+                "build_vectors_per_s": first.build_vectors_per_second,
+                "wall_speedup_vs_single": (
+                    baseline_build_wall / first.build_wall_seconds
+                ),
                 "latency_mean_ms": float(latencies.mean()),
                 "latency_p50_ms": float(np.percentile(latencies, 50)),
                 "latency_p95_ms": float(np.percentile(latencies, 95)),
@@ -478,8 +623,8 @@ def summarize(results: list[QueryResult]) -> list[dict[str, int | float]]:
                 "mean_recall_at_k": float(recalls.mean()),
                 "recall_p05": float(np.percentile(recalls, 5)),
                 "sequential_qps_from_mean": 1000 / float(latencies.mean()),
-            }
-        )
+                }
+            )
     return summaries
 
 
@@ -492,11 +637,19 @@ def write_summary_csv(path: Path, summaries: list[dict[str, int | float]]) -> No
 
 def write_readable(path: Path, summaries: list[dict[str, int | float]]) -> None:
     columns = [
+        ("index_type", "index_type", "<"),
         ("segments", "segments", ">"),
         ("rows", "rows", ">"),
         ("partitions", "partitions", ">"),
+        ("index_mb", "index_size_mb", ">"),
+        ("workers", "build_workers", ">"),
+        ("max_worker_rows", "max_worker_rows", ">"),
+        ("working_set_x", "working_set_reduction", ">"),
         ("build_wall_s", "build_wall_s", ">"),
         ("build_cpu_s", "build_cpu_s", ">"),
+        ("worker_sum_s", "worker_time_sum_s", ">"),
+        ("build_vec_s", "build_vectors_per_s", ">"),
+        ("speedup", "wall_speedup_vs_single", ">"),
         ("mean_ms", "latency_mean_ms", ">"),
         ("p50_ms", "latency_p50_ms", ">"),
         ("p95_ms", "latency_p95_ms", ">"),
@@ -541,15 +694,17 @@ def write_metadata(
         for key, value in vars(args).items()
     }
     metadata = {
-        "experiment": "multi-segment vs single-segment IVF-PQ",
+        "experiment": "multi-segment vs single-segment Lance vector indexes",
         "arguments": arguments,
         "ground_truth_source": ground_truth_source,
         "data_write_seconds": data_write_seconds,
         "actual_data_fragments": actual_fragments,
         "timing": (
             "ANN latency uses perf_counter_ns around Lance query execution and "
-            "result materialization; build_wall_seconds uses perf_counter; "
-            "build_cpu_seconds uses process_time."
+            "result materialization; build_wall_seconds covers concurrent segment "
+            "construction plus commit using perf_counter; build_cpu_seconds uses "
+            "process_time; segment_build_seconds_sum sums each worker's elapsed "
+            "build duration."
         ),
         "environment": {
             "python": platform.python_version(),
@@ -599,22 +754,26 @@ def main() -> None:
     )
 
     all_results: list[QueryResult] = []
-    for segment_count in args.segment_counts:
-        build = build_segmented_index(dataset_path, segment_count, args)
-        all_results.extend(
-            run_queries(
-                dataset_path,
-                segment_count,
-                build,
-                queries,
-                truth,
-                args,
+    for index_type in args.index_types:
+        for segment_count in args.segment_counts:
+            build = build_segmented_index(
+                dataset_path, index_type, segment_count, args
             )
-        )
-        summaries = summarize(all_results)
-        write_results(args.work_dir / "results.csv", all_results)
-        write_summary_csv(args.work_dir / "summary.csv", summaries)
-        write_readable(args.work_dir / "results_readable.txt", summaries)
+            all_results.extend(
+                run_queries(
+                    dataset_path,
+                    index_type,
+                    segment_count,
+                    build,
+                    queries,
+                    truth,
+                    args,
+                )
+            )
+            summaries = summarize(all_results)
+            write_results(args.work_dir / "results.csv", all_results)
+            write_summary_csv(args.work_dir / "summary.csv", summaries)
+            write_readable(args.work_dir / "results_readable.txt", summaries)
 
     print(f"\nDetailed samples: {args.work_dir / 'results.csv'}")
     print(f"Summary CSV:      {args.work_dir / 'summary.csv'}")

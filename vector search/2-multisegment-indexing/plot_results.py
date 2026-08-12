@@ -19,6 +19,11 @@ EXPERIMENT_DIR = Path(__file__).resolve().parent
 DEFAULT_RESULTS = EXPERIMENT_DIR / "multisegment_benchmark" / "results.csv"
 COLOR = "#168aad"
 ACCENT = "#dc2f02"
+INDEX_COLORS = {
+    "IVF_PQ": "#168aad",
+    "IVF_HNSW_PQ": "#dc2f02",
+    "IVF_HNSW_SQ": "#6f2dbd",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,7 +39,7 @@ def parse_args() -> argparse.Namespace:
 
 def summarize(results: pd.DataFrame) -> pd.DataFrame:
     return (
-        results.groupby("segment_count", sort=True)
+        results.groupby(["index_type", "segment_count"], sort=True)
         .agg(
             latency_mean_ms=("ann_query_ms", "mean"),
             latency_p50_ms=("ann_query_ms", lambda values: np.percentile(values, 50)),
@@ -45,10 +50,21 @@ def summarize(results: pd.DataFrame) -> pd.DataFrame:
             recall_p95=("recall_at_k", lambda values: np.percentile(values, 95)),
             build_wall_seconds=("build_wall_seconds", "first"),
             build_cpu_seconds=("build_cpu_seconds", "first"),
+            segment_build_seconds_sum=("segment_build_seconds_sum", "first"),
+            build_vectors_per_second=("build_vectors_per_second", "first"),
+            build_workers=("build_workers", "first"),
+            rows=("rows", "first"),
+            rows_per_segment_max=("rows_per_segment_max", "first"),
+            index_size_bytes=("index_size_bytes", "first"),
             total_ivf_partitions=("total_ivf_partitions", "first"),
         )
         .reset_index()
     )
+
+
+def index_groups(summary: pd.DataFrame):
+    for index_type, group in summary.groupby("index_type", sort=True):
+        yield index_type, group.sort_values("segment_count")
 
 
 def finish(figure, axis, output: Path) -> None:
@@ -61,39 +77,47 @@ def finish(figure, axis, output: Path) -> None:
 
 def save_latency(summary: pd.DataFrame, output: Path) -> None:
     figure, axis = plt.subplots(figsize=(10, 6))
-    for column, label, color, marker in (
-        ("latency_p50_ms", "p50", COLOR, "o"),
-        ("latency_p95_ms", "p95", ACCENT, "s"),
-        ("latency_p99_ms", "p99", "#6f2dbd", "^"),
-    ):
+    for index_type, group in index_groups(summary):
         axis.plot(
-            summary["segment_count"],
-            summary[column],
+            group["segment_count"],
+            group["latency_p95_ms"],
             linewidth=2,
-            marker=marker,
-            color=color,
-            label=label,
+            marker="o",
+            color=INDEX_COLORS.get(index_type),
+            label=f"{index_type} p95",
         )
-    axis.set_title("ANN latency vs. physical index segments")
+    axis.set_title("p95 ANN latency by index type and segment count")
     axis.set_xlabel("Number of index segments")
     axis.set_ylabel("ANN query latency (ms)")
-    axis.set_xticks(summary["segment_count"])
+    axis.set_xticks(sorted(summary["segment_count"].unique()))
     finish(figure, axis, output)
 
 
 def save_latency_distribution(results: pd.DataFrame, output: Path) -> None:
-    segment_counts = sorted(results["segment_count"].unique())
+    configurations = list(
+        results[["index_type", "segment_count"]]
+        .drop_duplicates()
+        .sort_values(["index_type", "segment_count"])
+        .itertuples(index=False, name=None)
+    )
     samples = [
-        results.loc[results["segment_count"] == count, "ann_query_ms"].to_numpy()
-        for count in segment_counts
+        results.loc[
+            (results["index_type"] == index_type)
+            & (results["segment_count"] == count),
+            "ann_query_ms",
+        ].to_numpy()
+        for index_type, count in configurations
     ]
-    figure, axis = plt.subplots(figsize=(10, 6))
-    boxes = axis.boxplot(samples, tick_labels=segment_counts, showfliers=False, patch_artist=True)
-    for box in boxes["boxes"]:
-        box.set_facecolor(COLOR)
+    labels = [f"{index_type}\n{count} seg" for index_type, count in configurations]
+    figure, axis = plt.subplots(figsize=(13, 6))
+    boxes = axis.boxplot(
+        samples, tick_labels=labels, showfliers=False, patch_artist=True
+    )
+    for box, (index_type, _) in zip(boxes["boxes"], configurations):
+        box.set_facecolor(INDEX_COLORS.get(index_type, COLOR))
         box.set_alpha(0.45)
-    axis.set_title("ANN latency distribution by segment count")
-    axis.set_xlabel("Number of index segments")
+    axis.set_title("ANN latency distributions by index type and segment count")
+    axis.set_xlabel("Index type and physical segments")
     axis.set_ylabel("ANN query latency (ms)")
     axis.grid(axis="y", alpha=0.22)
     figure.tight_layout()
@@ -103,22 +127,26 @@ def save_latency_distribution(results: pd.DataFrame, output: Path) -> None:
 
 def save_recall(summary: pd.DataFrame, output: Path, recall_k: int) -> None:
     figure, axis = plt.subplots(figsize=(10, 6))
-    lower = summary["recall_mean"] - summary["recall_p05"]
-    upper = summary["recall_p95"] - summary["recall_mean"]
-    axis.errorbar(
-        summary["segment_count"],
-        summary["recall_mean"],
-        yerr=np.vstack([lower.clip(lower=0), upper.clip(lower=0)]),
-        linewidth=2,
-        marker="o",
-        capsize=5,
-        color=COLOR,
-        label=f"mean recall@{recall_k} (p05–p95)",
-    )
-    axis.set_title(f"Recall@{recall_k} vs. physical index segments")
+    for index_type, group in index_groups(summary):
+        axis.plot(
+            group["segment_count"],
+            group["recall_mean"],
+            linewidth=2,
+            marker="o",
+            color=INDEX_COLORS.get(index_type),
+            label=index_type,
+        )
+        axis.fill_between(
+            group["segment_count"],
+            group["recall_p05"],
+            group["recall_p95"],
+            color=INDEX_COLORS.get(index_type),
+            alpha=0.12,
+        )
+    axis.set_title(f"Recall@{recall_k} by index type and segment count")
     axis.set_xlabel("Number of index segments")
     axis.set_ylabel(f"Recall@{recall_k}")
-    axis.set_xticks(summary["segment_count"])
+    axis.set_xticks(sorted(summary["segment_count"].unique()))
     minimum = min(float(summary["recall_p05"].min()), 1.0)
     axis.set_ylim(max(0, minimum - 0.05), 1.01)
     finish(figure, axis, output)
@@ -126,70 +154,113 @@ def save_recall(summary: pd.DataFrame, output: Path, recall_k: int) -> None:
 
 def save_throughput(summary: pd.DataFrame, output: Path) -> None:
     figure, axis = plt.subplots(figsize=(10, 6))
-    sequential_qps = 1000 / summary["latency_mean_ms"]
-    axis.plot(
-        summary["segment_count"],
-        sequential_qps,
-        linewidth=2,
-        marker="o",
-        color=COLOR,
-        label="sequential QPS from mean latency",
-    )
-    axis.set_title("Sequential ANN throughput vs. physical index segments")
+    for index_type, group in index_groups(summary):
+        axis.plot(
+            group["segment_count"],
+            1000 / group["latency_mean_ms"],
+            linewidth=2,
+            marker="o",
+            color=INDEX_COLORS.get(index_type),
+            label=index_type,
+        )
+    axis.set_title("Sequential ANN throughput by index type and segment count")
     axis.set_xlabel("Number of index segments")
     axis.set_ylabel("Queries per second")
-    axis.set_xticks(summary["segment_count"])
+    axis.set_xticks(sorted(summary["segment_count"].unique()))
     finish(figure, axis, output)
 
 
 def save_build_cost(summary: pd.DataFrame, output: Path) -> None:
     figure, axis = plt.subplots(figsize=(10, 6))
+    for index_type, group in index_groups(summary):
+        axis.plot(
+            group["segment_count"],
+            group["build_wall_seconds"],
+            linewidth=2,
+            marker="o",
+            color=INDEX_COLORS.get(index_type),
+            label=index_type,
+        )
+    axis.set_title("Concurrent build wall time by index type and segment count")
+    axis.set_xlabel("Number of index segments")
+    axis.set_ylabel("Build time (seconds)")
+    axis.set_xticks(sorted(summary["segment_count"].unique()))
+    finish(figure, axis, output)
+
+
+def save_build_throughput(summary: pd.DataFrame, output: Path) -> None:
+    figure, axis = plt.subplots(figsize=(10, 6))
+    for index_type, group in index_groups(summary):
+        axis.plot(
+            group["segment_count"],
+            group["build_vectors_per_second"],
+            linewidth=2,
+            marker="o",
+            color=INDEX_COLORS.get(index_type),
+            label=index_type,
+        )
+    axis.set_title("Scale-out build throughput by index type")
+    axis.set_xlabel("Number of index segments / available workers")
+    axis.set_ylabel("Vectors indexed per wall-clock second")
+    axis.set_xticks(sorted(summary["segment_count"].unique()))
+    finish(figure, axis, output)
+
+
+def save_worker_working_set(summary: pd.DataFrame, output: Path) -> None:
+    figure, axis = plt.subplots(figsize=(10, 6))
+    by_segments = summary.groupby("segment_count", sort=True).first().reset_index()
+    millions = by_segments["rows_per_segment_max"] / 1_000_000
     axis.plot(
-        summary["segment_count"],
-        summary["build_wall_seconds"],
+        by_segments["segment_count"],
+        millions,
         linewidth=2,
         marker="o",
         color=COLOR,
-        label="wall time (segments built sequentially)",
+        label="largest segment assigned to one worker",
     )
-    axis.plot(
-        summary["segment_count"],
-        summary["build_cpu_seconds"],
-        linewidth=2,
-        marker="s",
-        color=ACCENT,
-        label="process CPU time",
-    )
-    axis.set_title("Total index-build cost vs. physical index segments")
-    axis.set_xlabel("Number of index segments")
-    axis.set_ylabel("Build time (seconds)")
-    axis.set_xticks(summary["segment_count"])
+    axis.set_title("Maximum per-worker indexing working set")
+    axis.set_xlabel("Number of index segments / available workers")
+    axis.set_ylabel("Maximum rows handled by one worker (millions)")
+    axis.set_xticks(by_segments["segment_count"])
+    finish(figure, axis, output)
+
+
+def save_index_size(summary: pd.DataFrame, output: Path) -> None:
+    figure, axis = plt.subplots(figsize=(10, 6))
+    for index_type, group in index_groups(summary):
+        axis.plot(
+            group["segment_count"],
+            group["index_size_bytes"] / (1024 * 1024),
+            linewidth=2,
+            marker="o",
+            color=INDEX_COLORS.get(index_type),
+            label=index_type,
+        )
+    axis.set_title("Committed index size by type and segment count")
+    axis.set_xlabel("Number of physical index segments")
+    axis.set_ylabel("Index size (MiB)")
+    axis.set_xticks(sorted(summary["segment_count"].unique()))
     finish(figure, axis, output)
 
 
 def save_tradeoff(summary: pd.DataFrame, output: Path, recall_k: int) -> None:
     figure, axis = plt.subplots(figsize=(10, 6))
-    axis.plot(
-        summary["latency_p95_ms"],
-        summary["recall_mean"],
-        color=COLOR,
-        linewidth=1.5,
-        alpha=0.65,
-    )
-    axis.scatter(
-        summary["latency_p95_ms"],
-        summary["recall_mean"],
-        color=COLOR,
-        s=65,
-        label="segment configurations",
-    )
-    for row in summary.itertuples():
-        axis.annotate(
-            f"{int(row.segment_count)} segment{'s' if row.segment_count != 1 else ''}",
-            (row.latency_p95_ms, row.recall_mean),
-            xytext=(6, 6),
-            textcoords="offset points",
+    for index_type, group in index_groups(summary):
+        axis.plot(
+            group["latency_p95_ms"],
+            group["recall_mean"],
+            color=INDEX_COLORS.get(index_type),
+            linewidth=1.5,
+            marker="o",
+            label=index_type,
         )
+        for row in group.itertuples():
+            axis.annotate(
+                f"{int(row.segment_count)}",
+                (row.latency_p95_ms, row.recall_mean),
+                xytext=(5, 5),
+                textcoords="offset points",
+            )
     axis.set_title("Recall/latency tradeoff")
     axis.set_xlabel("p95 ANN latency (ms)")
     axis.set_ylabel(f"Mean recall@{recall_k}")
@@ -200,12 +271,19 @@ def main() -> None:
     args = parse_args()
     results = pd.read_csv(args.results)
     required = {
+        "index_type",
         "segment_count",
         "ann_query_ms",
         "recall_at_k",
         "recall_k",
         "build_wall_seconds",
         "build_cpu_seconds",
+        "segment_build_seconds_sum",
+        "build_vectors_per_second",
+        "build_workers",
+        "rows",
+        "rows_per_segment_max",
+        "index_size_bytes",
         "total_ivf_partitions",
     }
     missing = required - set(results.columns)
@@ -221,6 +299,9 @@ def main() -> None:
         "recall": output_dir / "recall_vs_segments.png",
         "throughput": output_dir / "query_throughput_vs_segments.png",
         "build": output_dir / "index_build_time_vs_segments.png",
+        "build_throughput": output_dir / "index_build_throughput.png",
+        "worker_working_set": output_dir / "worker_working_set.png",
+        "index_size": output_dir / "index_size_vs_segments.png",
         "tradeoff": output_dir / "recall_latency_tradeoff.png",
     }
     save_latency(summary, outputs["latency"])
@@ -228,6 +309,9 @@ def main() -> None:
     save_recall(summary, outputs["recall"], recall_k)
     save_throughput(summary, outputs["throughput"])
     save_build_cost(summary, outputs["build"])
+    save_build_throughput(summary, outputs["build_throughput"])
+    save_worker_working_set(summary, outputs["worker_working_set"])
+    save_index_size(summary, outputs["index_size"])
     save_tradeoff(summary, outputs["tradeoff"], recall_k)
     for output in outputs.values():
         print(f"Wrote {output}")
