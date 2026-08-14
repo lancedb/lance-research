@@ -1,0 +1,5 @@
+__pycache__/
+.venv/
+nvme_lancedb/
+results/*
+!results/*.png
