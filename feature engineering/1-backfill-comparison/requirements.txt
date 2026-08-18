@@ -1,0 +1,4 @@
+lancedb
+pylance
+numpy
+pyarrow
