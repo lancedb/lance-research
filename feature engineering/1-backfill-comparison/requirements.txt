@@ -2,3 +2,4 @@ lancedb
 pylance
 numpy
 pyarrow
+matplotlib
