@@ -1,15 +1,22 @@
 """Benchmark Lance SPFresh index maintenance on SIFT1M.
 
 This is primarily an ingestion/index-maintenance benchmark, with one ANN query
-and recall@k check after each mutation round. It creates one indexed baseline,
-copies it for a fair A/B comparison, and then applies the same sequence of
-inserts and vector upserts to two approaches:
+and recall@k check after each mutation round. It creates one indexed baseline
+per vector index type, copies each for a fair A/B comparison, and then applies
+the same sequence of inserts and vector upserts to two maintenance approaches:
 
-* ``spfresh``: incrementally maintain the existing IVF-PQ index with
-  ``dataset.optimize.optimize_indices`` (Lance's SPFresh path).
-* ``reindex``: periodically replace and retrain the complete IVF-PQ index.
-  Both approaches run maintenance every 30 queries and after the final query,
-  so they use the same schedule and finish fully indexed.
+* ``spfresh``: incrementally maintain the existing index with
+  ``dataset.optimize.optimize_indices`` (Lance's SPFresh path), run after every
+  query round since it only does work proportional to the rows changed since
+  its last call.
+* ``reindex``: periodically replace and retrain the complete index, run every
+  ``--maintenance-every`` queries and after the final query, since a full
+  rebuild costs the same regardless of how much changed.
+
+Both maintenance approaches are run against every requested vector index type
+(``--index-types``): ``ivf_pq`` (IVF_PQ), ``ivf_rq`` (IVF_RQ), and ``ivf_hnsw``
+(IVF_HNSW_FLAT). Every index-type/maintenance combination is plotted together
+on the same PNGs.
 
 Quick smoke test:
     python attempt_1.py --initial-rows 10000 --queries 3 \
@@ -46,6 +53,13 @@ VECTOR_COLUMN = "vector"
 EXTRAPOLATION_ROWS = 1_000_000_000
 OUTPUT_DECIMAL_PLACES = 3
 INDEX_INCORPORATION_RATE_WINDOW = 30
+# Maps our short index-type name to lance's index_type string and any extra
+# create_index kwargs it needs (e.g. IVF_PQ's num_sub_vectors).
+INDEX_TYPE_CONFIG = {
+    "ivf_pq": ("IVF_PQ", lambda args: {"num_sub_vectors": args.num_sub_vectors}),
+    "ivf_rq": ("IVF_RQ", lambda args: {}),
+    "ivf_hnsw": ("IVF_HNSW_FLAT", lambda args: {}),
+}
 
 
 @dataclass
@@ -66,11 +80,9 @@ class StepResult:
     end_to_end_vectors_per_second: float
     extrapolated_1b_maintenance_hours: float | None
     recall_at_k: float
-    exact_query_ms: float
     ann_query_ms: float
     indexed_rows: int
     unindexed_rows: int
-    index_segments: int
     index_partitions: int
     partition_size_min: int
     partition_size_max: int
@@ -109,8 +121,8 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=30,
         help=(
-            "Run both SPFresh optimization and manual rebuilding every N queries. "
-            "Both also run after the final query when it is off-cycle."
+            "Run manual reindexing every N queries (and after the final query "
+            "when it is off-cycle). SPFresh optimization always runs every query."
         ),
     )
     parser.add_argument(
@@ -126,6 +138,13 @@ def parse_args() -> argparse.Namespace:
         "--approach",
         choices=("both", "spfresh", "reindex"),
         default="both",
+    )
+    parser.add_argument(
+        "--index-types",
+        choices=list(INDEX_TYPE_CONFIG),
+        nargs="+",
+        default=list(INDEX_TYPE_CONFIG),
+        help="Vector index types to benchmark, each with both maintenance approaches.",
     )
     return parser.parse_args()
 
@@ -210,11 +229,11 @@ def reset_work_dir(path: Path) -> None:
         shutil.rmtree(path)
     path.mkdir(parents=True)
 
-#Step 1 of experiment. Set up data and stuff. Make 2 copies
+#Step 1 of experiment. Set up data and stuff. Make 2 copies per index type
 def create_baseline(
     vectors: np.ndarray, args: argparse.Namespace, baseline_path: Path
-) -> tuple[float, float]:
-    """Write and index the common baseline; return write and index seconds."""
+) -> float:
+    """Write the common, unindexed baseline; return write seconds."""
     print(f"Writing {args.initial_rows:,} baseline vectors in bounded batches...")
     write_start = time.perf_counter()
     dataset = None
@@ -230,39 +249,42 @@ def create_baseline(
             )
         else:
             dataset.insert(table)
-    write_seconds = time.perf_counter() - write_start
+    return time.perf_counter() - write_start
 
-    assert dataset is not None
+
+def build_index(dataset_path: Path, index_type: str, args: argparse.Namespace) -> float:
+    """Build (or rebuild) the named vector index; return index seconds."""
+    dataset = lance.dataset(dataset_path)
+    pylance_type, extra_kwargs = INDEX_TYPE_CONFIG[index_type]
     num_partitions = recommended_num_partitions(
-        args.initial_rows, args.target_partition_size
-    )
-    print(
-        f"Building the common {num_partitions:,}-partition IVF-PQ baseline index "
-        f"for {args.initial_rows:,} rows..."
+        dataset.count_rows(), args.target_partition_size
     )
     index_start = time.perf_counter()
     dataset.create_index(
         VECTOR_COLUMN,
-        index_type="IVF_PQ",
+        index_type=pylance_type,
         name=INDEX_NAME,
         metric="L2",
+        replace=True,
         num_partitions=num_partitions,
-        num_sub_vectors=args.num_sub_vectors,
+        **extra_kwargs(args),
     )
-    index_seconds = time.perf_counter() - index_start
-    return write_seconds, index_seconds
+    return time.perf_counter() - index_start
 
 def selected_approaches(value: str) -> list[str]:
     return ["spfresh", "reindex"] if value == "both" else [value]
 
 def copy_baseline(
-    baseline_path: Path, work_dir: Path, approaches: Iterable[str]
+    indexed_baseline_paths: dict[str, Path],
+    work_dir: Path,
+    variants: Iterable[tuple[str, str]],
 ) -> dict[str, Path]:
     paths = {}
-    for approach in approaches:
-        destination = work_dir / approach
-        shutil.copytree(baseline_path, destination)
-        paths[approach] = destination
+    for index_type, maintenance in variants:
+        name = f"{index_type}_{maintenance}"
+        destination = work_dir / name
+        shutil.copytree(indexed_baseline_paths[index_type], destination)
+        paths[name] = destination
     return paths
 
 #step 2 of experiment. mutate data in successive rounds, evaluate 2 copies by diff approaches
@@ -296,42 +318,37 @@ def maintenance_is_due(query_number: int, args: argparse.Namespace) -> bool:
 
 def maintain_index(
     dataset_path: Path,
-    approach: str,
+    maintenance: str,
+    index_type: str,
     query_number: int,
     args: argparse.Namespace,
 ) -> tuple[str, float]:
-    if not maintenance_is_due(query_number, args):
-        return "skipped", 0.0
-
-    dataset = lance.dataset(dataset_path)
-    start = time.perf_counter()
-    if approach == "spfresh":
+    if maintenance == "spfresh":
+        # SPFresh only does work proportional to rows changed since its last
+        # call, so it runs every round instead of on --maintenance-every.
+        dataset = lance.dataset(dataset_path)
+        start = time.perf_counter()
         dataset.optimize.optimize_indices(
             index_names=[INDEX_NAME],
             num_indices_to_merge=args.spfresh_merge_indices,
         )
-    else:
-        num_partitions = recommended_num_partitions(
-            dataset.count_rows(), args.target_partition_size
-        )
-        dataset.create_index(
-            VECTOR_COLUMN,
-            index_type="IVF_PQ",
-            name=INDEX_NAME,
-            metric="L2",
-            replace=True,
-            num_partitions=num_partitions,
-            num_sub_vectors=args.num_sub_vectors,
-        )
-    return approach, time.perf_counter() - start
+        return maintenance, time.perf_counter() - start
+
+    if not maintenance_is_due(query_number, args):
+        return "skipped", 0.0
+    return maintenance, build_index(dataset_path, index_type, args)
 
 
 def maintenance_rows_covered(
     query_number: int,
     changed_per_query: int,
+    maintenance: str,
     args: argparse.Namespace,
 ) -> int:
     """Return mutation volume incorporated by this maintenance operation."""
+    if maintenance == "spfresh":
+        return changed_per_query
+
     if not maintenance_is_due(query_number, args):
         return 0
 
@@ -341,14 +358,12 @@ def maintenance_rows_covered(
     return (query_number - previous_maintenance_query) * changed_per_query
 
 
-def measure_query(
-    dataset: lance.LanceDataset,
-    query: np.ndarray,
-    args: argparse.Namespace,
-) -> tuple[float, float, float]:
-    """Measure one exact query, one ANN query, and recall@k."""
-    exact_start = time.perf_counter()
-    exact_ids = set(
+def compute_exact_ids(
+    dataset: lance.LanceDataset, query: np.ndarray, args: argparse.Namespace
+) -> set[int]:
+    """Ground-truth k-NN for one query round, shared across every approach
+    since the same mutations are applied to every approach's dataset."""
+    return set(
         dataset.to_table(
             nearest={
                 "column": VECTOR_COLUMN,
@@ -358,8 +373,15 @@ def measure_query(
             }
         )["id"].to_pylist()
     )
-    exact_ms = (time.perf_counter() - exact_start) * 1000
 
+
+def measure_query(
+    dataset: lance.LanceDataset,
+    query: np.ndarray,
+    args: argparse.Namespace,
+    exact_ids: set[int],
+) -> tuple[float, float]:
+    """Measure one ANN query and recall@k against the shared exact ground truth."""
     ann_start = time.perf_counter()
     ann_ids = set(
         dataset.to_table(
@@ -374,29 +396,34 @@ def measure_query(
     )
     ann_ms = (time.perf_counter() - ann_start) * 1000
     recall = len(exact_ids & ann_ids) / len(exact_ids)
-    return recall, exact_ms, ann_ms
+    return recall, ann_ms
 
 
 def run_query_round(
-    approach: str,
+    index_type: str,
+    maintenance: str,
     query_number: int,
     dataset_path: Path,
     append_table: pa.Table | None,
     update_table: pa.Table | None,
     query: np.ndarray,
     args: argparse.Namespace,
-) -> StepResult:
+    exact_ids: set[int] | None,
+) -> tuple[StepResult, set[int]]:
+    approach = f"{index_type}_{maintenance}"
     before = lance.dataset(dataset_path).count_rows()
     mutation_seconds = apply_mutations(dataset_path, append_table, update_table)
     maintenance_action, maintenance_seconds = maintain_index(
-        dataset_path, approach, query_number, args
+        dataset_path, maintenance, index_type, query_number, args
     )
     total_seconds = mutation_seconds + maintenance_seconds
     changed = args.append_rows + args.update_rows
-    covered = maintenance_rows_covered(query_number, changed, args)
+    covered = maintenance_rows_covered(query_number, changed, maintenance, args)
     dataset = lance.dataset(dataset_path)
     state = index_state(dataset)
-    recall_at_k, exact_query_ms, ann_query_ms = measure_query(dataset, query, args)
+    if exact_ids is None:
+        exact_ids = compute_exact_ids(dataset, query, args)
+    recall_at_k, ann_query_ms = measure_query(dataset, query, args, exact_ids)
     maintenance_rate = (
         covered / maintenance_seconds if maintenance_seconds > 0 else None
     )
@@ -422,11 +449,9 @@ def run_query_round(
             else None
         ),
         recall_at_k=recall_at_k,
-        exact_query_ms=exact_query_ms,
         ann_query_ms=ann_query_ms,
         indexed_rows=int(state["indexed_rows"]),
         unindexed_rows=int(state["unindexed_rows"]),
-        index_segments=int(state["segments"]),
         index_partitions=int(state["partitions"]),
         partition_size_min=int(state["partition_min"]),
         partition_size_max=int(state["partition_max"]),
@@ -441,13 +466,13 @@ def run_query_round(
         else "skipped"
     )
     print(
-        f"{approach:7s} query={query_number:3d} changed={changed:,} "
+        f"{approach:17s} query={query_number:3d} changed={changed:,} "
         f"mutate={mutation_seconds:.3f}s maintain={maintenance_summary} "
         f"ann={ann_query_ms:.3f}ms recall@{args.recall_k}={recall_at_k:.3f} "
         f"indexed={result.indexed_rows:,}/{result.rows_after:,} "
-        f"segments={result.index_segments} partitions={result.index_partitions}"
+        f"partitions={result.index_partitions}"
     )
-    return result
+    return result, exact_ids
 
 #step 3 of experiment: measure and report
 def index_state(dataset: lance.LanceDataset) -> dict[str, int | float]:
@@ -455,10 +480,9 @@ def index_state(dataset: lance.LanceDataset) -> dict[str, int | float]:
         item for item in dataset.describe_indices() if item.name == INDEX_NAME
     )
     stats = dataset.index_statistics(INDEX_NAME)
-    segments = stats.get("indices", [])
     partition_sizes = [
         int(partition["size"])
-        for segment in segments
+        for segment in stats.get("indices", [])
         for partition in segment.get("partitions", [])
     ]
     indexed_rows = int(description.num_rows_indexed)
@@ -468,9 +492,6 @@ def index_state(dataset: lance.LanceDataset) -> dict[str, int | float]:
         "rows": live_rows,
         "indexed_rows": indexed_rows,
         "unindexed_rows": max(0, live_rows - indexed_rows),
-        # ``IndexDescription.segments`` is available in newer pylance builds,
-        # while the stable statistics dictionary exposes the count directly.
-        "segments": int(stats.get("num_segments", len(segments))),
         "partitions": len(partition_sizes),
         "partition_min": int(sizes.min()) if sizes.size else 0,
         "partition_max": int(sizes.max()) if sizes.size else 0,
@@ -530,10 +551,8 @@ def write_readable_results(path: Path, results: list[StepResult]) -> None:
             ">",
         ),
         ("ann_ms", "ann_query_ms", ">"),
-        ("exact_ms", "exact_query_ms", ">"),
         ("recall", "recall_at_k", ">"),
         ("partitions", "index_partitions", ">"),
-        ("segments", "index_segments", ">"),
     ]
     rows = []
     for result in results:
@@ -573,7 +592,7 @@ def print_summary(results: list[StepResult]) -> None:
             [item.ann_query_ms for item in selected], dtype=np.float64
         )
         print(
-            f"  {approach:7s}: maintenance={maintenance_rate:,.0f} vec/s, "
+            f"  {approach:17s}: maintenance={maintenance_rate:,.0f} vec/s, "
             f"end-to-end={changed / total_seconds:,.0f} vec/s, "
             f"ANN mean={ann_latencies.mean():.3f}ms, "
             f"p95={np.percentile(ann_latencies, 95):.3f}ms, "
@@ -587,18 +606,36 @@ def main() -> None:
     vectors = load_sift_vectors(args.sift_base)
     validate_args(args, len(vectors))
     reset_work_dir(args.work_dir)
+    tables_dir = args.work_dir / "tables"
+    tables_dir.mkdir(parents=True)
 
-    baseline_path = args.work_dir / "baseline"
-    write_seconds, initial_index_seconds = create_baseline(vectors, args, baseline_path)
-    initial_index_rate = args.initial_rows / initial_index_seconds
-    print(
-        f"Baseline write: {write_seconds:.3f}s; index build: {initial_index_seconds:.3f}s "
-        f"({initial_index_rate:,.0f} vec/s; naive linear 1B build "
-        f"{EXTRAPOLATION_ROWS / initial_index_rate / 3600:,.2f}h)"
-    )
+    baseline_path = tables_dir / "baseline"
+    write_seconds = create_baseline(vectors, args, baseline_path)
+    print(f"Baseline write: {write_seconds:.3f}s")
 
-    approaches = selected_approaches(args.approach)
-    dataset_paths = copy_baseline(baseline_path, args.work_dir, approaches)
+    indexed_baseline_paths: dict[str, Path] = {}
+    initial_index_seconds: dict[str, float] = {}
+    initial_index_rate: dict[str, float] = {}
+    for index_type in args.index_types:
+        indexed_baseline_paths[index_type] = tables_dir / f"baseline_{index_type}"
+        shutil.copytree(baseline_path, indexed_baseline_paths[index_type])
+        initial_index_seconds[index_type] = build_index(
+            indexed_baseline_paths[index_type], index_type, args
+        )
+        initial_index_rate[index_type] = args.initial_rows / initial_index_seconds[index_type]
+        print(
+            f"{index_type}: index build {initial_index_seconds[index_type]:.3f}s "
+            f"({initial_index_rate[index_type]:,.0f} vec/s; naive linear 1B build "
+            f"{EXTRAPOLATION_ROWS / initial_index_rate[index_type] / 3600:,.2f}h)"
+        )
+
+    maintenances = selected_approaches(args.approach)
+    variants = [
+        (index_type, maintenance)
+        for index_type in args.index_types
+        for maintenance in maintenances
+    ]
+    dataset_paths = copy_baseline(indexed_baseline_paths, tables_dir, variants)
     metadata = {
         "lance_version": lance.__version__,
         "source": str(args.sift_base),
@@ -657,20 +694,22 @@ def main() -> None:
 
         # Alternate execution order to reduce systematic warm-cache/order bias.
         query_order = (
-            approaches if query_number % 2 else list(reversed(approaches))
+            variants if query_number % 2 else list(reversed(variants))
         )
-        for approach in query_order:
-            results.append(
-                run_query_round(
-                    approach,
-                    query_number,
-                    dataset_paths[approach],
-                    append_table,
-                    update_table,
-                    query_vectors[query_number - 1],
-                    args,
-                )
+        exact_ids = None
+        for index_type, maintenance in query_order:
+            result, exact_ids = run_query_round(
+                index_type,
+                maintenance,
+                query_number,
+                dataset_paths[f"{index_type}_{maintenance}"],
+                append_table,
+                update_table,
+                query_vectors[query_number - 1],
+                args,
+                exact_ids,
             )
+            results.append(result)
         update_index_incorporation_rates(results)
         write_results(args.work_dir / "results.csv", results)
         write_readable_results(args.work_dir / "results_readable.txt", results)

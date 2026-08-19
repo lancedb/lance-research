@@ -96,12 +96,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mode", choices=("all", "load", "benchmark"), default="all"
     )
-    parser.add_argument(
-        "--read-pattern",
-        choices=("both", "shuffled", "sequential"),
-        default="both",
-        help="Read pattern(s) measured in benchmark mode (default: both).",
-    )
     parser.add_argument("--sift-base", type=Path, default=DEFAULT_SIFT_BASE)
     parser.add_argument(
         "--local-db-dir",
@@ -338,7 +332,7 @@ def validate_table(table: object, expected_rows: int) -> tuple[object, int]:
 
 
 def benchmark(
-    args: argparse.Namespace, target: StorageTarget, read_pattern: str
+    args: argparse.Namespace, target: StorageTarget
 ) -> list[ReadResult]:
     if not table_exists(target.db, TABLE_NAME):
         raise SystemExit(
@@ -349,28 +343,17 @@ def benchmark(
     results: list[ReadResult] = []
     for trial in range(args.trials):
         trial_seed = args.seed + trial
-        offsets = (
-            np.random.default_rng(trial_seed).permutation(actual_rows)
-            if read_pattern == "shuffled"
-            else None
-        )
+        offsets = np.random.default_rng(trial_seed).permutation(actual_rows)
         values_read = 0
         gc_was_enabled = gc.isenabled()
         gc.disable()
         started = time.perf_counter_ns()
         try:
-            if read_pattern == "shuffled":
-                assert offsets is not None
-                for start in range(0, actual_rows, args.take_size):
-                    selected = dataset.take(
-                        offsets[start : start + args.take_size], columns=[VECTOR_COLUMN]
-                    )
-                    values_read += selected.num_rows
-            else:
-                for batch in dataset.to_batches(
-                    columns=[VECTOR_COLUMN], batch_size=args.take_size
-                ):
-                    values_read += batch.num_rows
+            for start in range(0, actual_rows, args.take_size):
+                selected = dataset.take(
+                    offsets[start : start + args.take_size], columns=[VECTOR_COLUMN]
+                )
+                values_read += selected.num_rows
         finally:
             elapsed = (time.perf_counter_ns() - started) / 1e9
             if gc_was_enabled:
@@ -390,10 +373,7 @@ def benchmark(
             payload_mb_per_second=values_read * VALUE_BYTES / elapsed / 1e6,
         )
         results.append(result)
-        print(
-            f"Read [{target.backend}/{read_pattern}]: "
-            f"{json.dumps(asdict(result), sort_keys=True)}"
-        )
+        print(f"Read [{target.backend}]: {json.dumps(asdict(result), sort_keys=True)}")
     return results
 
 
@@ -424,23 +404,15 @@ def write_outputs(
     devices: list[str],
     targets: list[StorageTarget],
     loads: dict[str, dict[str, object]],
-    reads_by_pattern: dict[str, list[ReadResult]],
+    reads: list[ReadResult],
 ) -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    result_paths = {
-        "shuffled": args.output_dir / "shuffled_read_results.csv",
-        "sequential": args.output_dir / "sequential_read_results.csv",
-    }
-    written_result_paths: list[Path] = []
-    for read_pattern, reads in reads_by_pattern.items():
-        if not reads:
-            continue
-        result_path = result_paths[read_pattern]
-        with result_path.open("w", newline="", encoding="utf-8") as handle:
+    csv_path = args.output_dir / "shuffled_read_results.csv"
+    if reads:
+        with csv_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=RESULT_FIELDS)
             writer.writeheader()
             writer.writerows(asdict(result) for result in reads)
-        written_result_paths.append(result_path)
 
     loads_path = args.output_dir / "load_results.json"
     if loads:
@@ -465,9 +437,8 @@ def write_outputs(
         "nvme_confirmed": bool(devices),
         "nvme_devices": devices,
         "method": (
-            "Shuffled reads consume identical seeded permutations with pylance "
-            "LanceDataset.take(). Sequential reads consume a projected Lance scan "
-            "with LanceDataset.to_batches(). Both materialize the vector column."
+            "Each backend stores the same table and consumes identical seeded "
+            "permutations using sequential pylance LanceDataset.take() calls."
         ),
         "interpretation_note": (
             "Running this process on a laptop measures internet path plus S3. "
@@ -476,14 +447,9 @@ def write_outputs(
         ),
         "cache_note": "OS and Lance caches are not flushed between trials.",
         "loads": loads,
-        "read_summary": {
-            read_pattern: summarize_reads(reads)
-            for read_pattern, reads in reads_by_pattern.items()
-            if reads
-        },
+        "read_summary": summarize_reads(reads) if reads else None,
         "configuration": {
             "backend": args.backend,
-            "read_pattern": args.read_pattern,
             "rows": args.rows,
             "value_bytes": VALUE_BYTES,
             "write_batch_rows": args.write_batch_rows,
@@ -502,8 +468,8 @@ def write_outputs(
     }
     metadata_path = args.output_dir / "metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-    for path in (*written_result_paths, loads_path, metadata_path):
-        if path.exists():
+    for path in (csv_path if reads else None, loads_path, metadata_path):
+        if path is not None and path.exists():
             print(f"Wrote {path}")
 
 
@@ -522,20 +488,11 @@ def main() -> None:
     if vectors is not None:
         for target in targets:
             loads[target.backend] = load_table(args, target, vectors)
-    reads_by_pattern: dict[str, list[ReadResult]] = {}
+    reads: list[ReadResult] = []
     if args.mode in ("all", "benchmark"):
-        patterns = (
-            ["shuffled", "sequential"]
-            if args.read_pattern == "both"
-            else [args.read_pattern]
-        )
-        for read_pattern in patterns:
-            reads_by_pattern[read_pattern] = []
-            for target in targets:
-                reads_by_pattern[read_pattern].extend(
-                    benchmark(args, target, read_pattern)
-                )
-    write_outputs(args, devices, targets, loads, reads_by_pattern)
+        for target in targets:
+            reads.extend(benchmark(args, target))
+    write_outputs(args, devices, targets, loads, reads)
 
 
 if __name__ == "__main__":

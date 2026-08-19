@@ -16,7 +16,16 @@ import pandas as pd
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-COLORS = {"spfresh": "#168aad", "reindex": "#dc2f02"}
+# Each index type gets its own hue; spfresh/reindex are the saturated/muted
+# shade of that hue so the maintenance-strategy comparison stays legible.
+COLORS = {
+    "ivf_pq_spfresh": "#168aad",
+    "ivf_pq_reindex": "#dc2f02",
+    "ivf_rq_spfresh": "#1baf7a",
+    "ivf_rq_reindex": "#eda100",
+    "ivf_hnsw_spfresh": "#4a3aa7",
+    "ivf_hnsw_reindex": "#e87ba4",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        help="Directory for generated PNG files (defaults beside results.csv).",
+        help="Directory for generated PNG files (defaults to a 'plots' folder beside results.csv).",
     )
     parser.add_argument(
         "--rolling-window",
@@ -102,18 +111,6 @@ def finish_plot(figure, axis, output: Path) -> None:
     plt.close(figure)
 
 
-def save_latency_plot(
-    results: pd.DataFrame, output: Path, rolling_window: int
-) -> None:
-    figure, axis = plt.subplots(figsize=(11, 6))
-    add_raw_and_rolling_series(axis, results, "ann_query_ms", rolling_window)
-    add_rebuild_markers(axis, results)
-    axis.set_title("ANN query latency as unindexed data accumulates")
-    axis.set_xlabel("Query number")
-    axis.set_ylabel("ANN query latency (ms)")
-    finish_plot(figure, axis, output)
-
-
 def save_recall_plot(
     results: pd.DataFrame,
     output: Path,
@@ -129,27 +126,6 @@ def save_recall_plot(
     axis.set_ylabel(metric)
     lower_bound = max(0.0, float(results["recall_at_k"].min()) - 0.03)
     axis.set_ylim(lower_bound, 1.01)
-    finish_plot(figure, axis, output)
-
-
-def save_maintenance_plot(results: pd.DataFrame, output: Path) -> None:
-    figure, axis = plt.subplots(figsize=(11, 6))
-    for approach, group in approach_groups(results):
-        axis.plot(
-            group["query_number"],
-            group["maintenance_seconds"] * 1000,
-            color=COLORS.get(approach),
-            linewidth=1.5,
-            marker="o",
-            markersize=2.5,
-            label=approach,
-        )
-    add_rebuild_markers(axis, results)
-    axis.set_title("Index-maintenance cost per query round")
-    axis.set_xlabel("Query number")
-    axis.set_ylabel("Maintenance time (ms, symmetric log scale)")
-    axis.set_yscale("symlog", linthresh=1)
-    axis.set_ylim(bottom=0)
     finish_plot(figure, axis, output)
 
 
@@ -274,27 +250,6 @@ def save_cumulative_indexing_time_plot(
     finish_plot(figure, axis, output)
 
 
-def save_freshness_plot(results: pd.DataFrame, output: Path) -> None:
-    figure, axis = plt.subplots(figsize=(11, 6))
-    minimum_freshness = 100.0
-    for approach, group in approach_groups(results):
-        freshness = group["indexed_rows"] / group["rows_after"] * 100
-        minimum_freshness = min(minimum_freshness, float(freshness.min()))
-        axis.plot(
-            group["query_number"],
-            freshness,
-            color=COLORS.get(approach),
-            linewidth=2,
-            label=approach,
-        )
-    add_rebuild_markers(axis, results)
-    axis.set_title("Index freshness as mutations accumulate")
-    axis.set_xlabel("Query number")
-    axis.set_ylabel("Rows covered by the index (%)")
-    axis.set_ylim(max(0, minimum_freshness - 1), 100.2)
-    finish_plot(figure, axis, output)
-
-
 def save_partitions_plot(results: pd.DataFrame, output: Path) -> None:
     figure, axis = plt.subplots(figsize=(11, 6))
     for approach, group in approach_groups(results):
@@ -346,27 +301,22 @@ def main() -> None:
     if missing:
         raise ValueError(f"Missing result columns: {', '.join(sorted(missing))}")
 
-    output_dir = args.output_dir or args.results.parent
+    output_dir = args.output_dir or args.results.parent / "plots"
     output_dir.mkdir(parents=True, exist_ok=True)
     outputs = {
-        "query_latency": output_dir / "query_latency.png",
         "recall": output_dir / "recall_at_k.png",
-        "maintenance": output_dir / "maintenance_time.png",
         "amortized": output_dir / "amortized_system_cost.png",
         "ingestion": output_dir / "ingestion_rates.png",
         "cumulative_indexing": output_dir / "cumulative_indexing_time.png",
-        "freshness": output_dir / "index_freshness.png",
         "partitions": output_dir / "ivf_partitions.png",
     }
 
-    save_latency_plot(results, outputs["query_latency"], args.rolling_window)
     save_recall_plot(
         results,
         outputs["recall"],
         args.rolling_window,
         read_recall_k(args.results),
     )
-    save_maintenance_plot(results, outputs["maintenance"])
     save_amortized_cost_plot(
         results, outputs["amortized"], args.amortization_window
     )
@@ -376,7 +326,6 @@ def main() -> None:
     save_cumulative_indexing_time_plot(
         results, outputs["cumulative_indexing"]
     )
-    save_freshness_plot(results, outputs["freshness"])
     save_partitions_plot(results, outputs["partitions"])
 
     for output in outputs.values():

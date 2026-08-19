@@ -12,8 +12,6 @@ __pycache__/
 
 # Generated Lance datasets and indexes
 /vector search/benchmark.lance/
-/vector search/1-ingestion-rate/spfresh_benchmark/baseline/
-/vector search/1-ingestion-rate/spfresh_benchmark/reindex/
-/vector search/1-ingestion-rate/spfresh_benchmark/spfresh/
+/vector search/1-ingestion-rate/spfresh_benchmark/tables/
 /vector search/2-multisegment-indexing/multisegment_benchmark/data.lance/
 /vector search/2-multisegment-indexing/multisegment_smoke/
