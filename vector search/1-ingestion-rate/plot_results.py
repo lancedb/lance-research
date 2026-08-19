@@ -26,6 +26,52 @@ COLORS = {
     "ivf_hnsw_spfresh": "#4a3aa7",
     "ivf_hnsw_reindex": "#e87ba4",
 }
+# index_partitions (and occasionally other metrics) depend only on row count,
+# not index type, so the 3 index types under the same maintenance strategy
+# can be pixel-identical and one solid line would fully hide the other two.
+# Linestyle by index type gives every series a second, texture-based identity
+# channel that survives exact numeric overlap. Drawn in this order (solid,
+# then dashed, then dotted last) so the sparsest-ink style sits on top and
+# lets whatever is fully hidden underneath still show through its gaps.
+APPROACH_ORDER = [
+    "ivf_pq_spfresh",
+    "ivf_pq_reindex",
+    "ivf_rq_spfresh",
+    "ivf_rq_reindex",
+    "ivf_hnsw_spfresh",
+    "ivf_hnsw_reindex",
+]
+INDEX_TYPE_LINESTYLES = {
+    "ivf_pq": "solid",
+    "ivf_rq": "dashed",
+    "ivf_hnsw": "dotted",
+}
+
+
+def index_type_of(approach: str) -> str:
+    for suffix in ("_spfresh", "_reindex"):
+        if approach.endswith(suffix):
+            return approach[: -len(suffix)]
+    return approach
+
+
+def linestyle_for(approach: str) -> str:
+    return INDEX_TYPE_LINESTYLES.get(index_type_of(approach), "solid")
+
+
+def series_style(approach: str, n_points: int) -> dict:
+    """Shared per-series style: color still encodes the full approach; the
+    linestyle + sparse white-ringed markers give overlapping series a second,
+    non-color way to stay distinguishable when their values coincide."""
+    return {
+        "color": COLORS.get(approach),
+        "linestyle": linestyle_for(approach),
+        "marker": "o",
+        "markevery": max(1, n_points // 12),
+        "markersize": 5,
+        "markeredgecolor": "white",
+        "markeredgewidth": 0.7,
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,8 +103,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def approach_groups(results: pd.DataFrame):
-    for approach, group in results.groupby("approach", sort=True):
-        yield approach, group.sort_values("query_number")
+    present = set(results["approach"].unique())
+    order = [approach for approach in APPROACH_ORDER if approach in present]
+    order += sorted(present.difference(order))
+    for approach in order:
+        group = results.loc[results["approach"] == approach].sort_values("query_number")
+        yield approach, group
 
 
 def add_rebuild_markers(axis, results: pd.DataFrame) -> None:
@@ -83,11 +133,10 @@ def add_raw_and_rolling_series(
     rolling_window: int,
 ) -> None:
     for approach, group in approach_groups(results):
-        color = COLORS.get(approach)
         axis.plot(
             group["query_number"],
             group[value_column],
-            color=color,
+            color=COLORS.get(approach),
             alpha=0.25,
             linewidth=1,
         )
@@ -97,9 +146,9 @@ def add_raw_and_rolling_series(
         axis.plot(
             group["query_number"],
             smoothed,
-            color=color,
             linewidth=2,
             label=f"{approach} ({rolling_window}-query average)",
+            **series_style(approach, len(group)),
         )
 
 
@@ -142,9 +191,9 @@ def save_amortized_cost_plot(
         axis.plot(
             group["query_number"],
             amortized,
-            color=COLORS.get(approach),
             linewidth=2,
             label=f"{approach} ({window}-query trailing average)",
+            **series_style(approach, len(group)),
         )
     add_rebuild_markers(axis, results)
     axis.set_title("Amortized system cost per query round")
@@ -182,20 +231,20 @@ def save_ingestion_rates_plot(
             incorporation_rate = group[
                 "index_incorporation_30q_vectors_per_second"
             ]
-        color = COLORS.get(approach)
+        style = series_style(approach, len(group))
         storage_axis.plot(
             group["query_number"],
             storage_rate,
-            color=color,
             linewidth=2,
             label=f"{approach} ({window}-query rate)",
+            **style,
         )
         index_axis.plot(
             group["query_number"],
             incorporation_rate,
-            color=color,
             linewidth=2,
             label=f"{approach} ({window}-query rate)",
+            **style,
         )
 
     add_rebuild_markers(storage_axis, results)
@@ -217,8 +266,16 @@ def save_ingestion_rates_plot(
 def save_cumulative_indexing_time_plot(
     results: pd.DataFrame, output: Path
 ) -> None:
-    """Plot cumulative maintenance time against experiment ingestion progress."""
-    figure, axis = plt.subplots(figsize=(11, 6))
+    """Plot cumulative maintenance time against experiment ingestion progress.
+
+    One approach's cumulative cost can dwarf the rest by an order of
+    magnitude or more, and several series are genuinely 0 for a long
+    stretch (reindex hasn't fired yet) so a log y-axis can't represent
+    them either. Small multiples — a full-scale panel plus a panel
+    zoomed to whichever series aren't the runaway outlier — keeps every
+    series readable without a dual y-axis.
+    """
+    series = []
     for approach, group in approach_groups(results):
         changed = group["appended_rows"] + group["updated_rows"]
         total_changed = changed.sum()
@@ -234,20 +291,41 @@ def save_cumulative_indexing_time_plot(
             [pd.Series([0.0]), cumulative_indexing_seconds.reset_index(drop=True)],
             ignore_index=True,
         )
-        axis.step(
-            x,
-            y,
-            where="post",
-            color=COLORS.get(approach),
-            linewidth=2,
-            label=approach,
-        )
+        series.append((approach, x, y))
 
-    axis.set_title("Cumulative index-maintenance time vs. rows ingested")
-    axis.set_xlabel("Rows ingested (% of experiment total)")
-    axis.set_ylabel("Cumulative indexing time (seconds)")
-    axis.set_xlim(0, 100)
-    finish_plot(figure, axis, output)
+    finals = {approach: y.iloc[-1] for approach, _, y in series}
+    dominant = max(finals, key=finals.get)
+    runner_up_max = max(v for a, v in finals.items() if a != dominant)
+
+    figure, (full_axis, zoom_axis) = plt.subplots(
+        2, 1, figsize=(11, 10), sharex=True
+    )
+    for axis in (full_axis, zoom_axis):
+        for approach, x, y in series:
+            axis.step(
+                x,
+                y,
+                where="post",
+                linewidth=2,
+                label=approach,
+                **series_style(approach, len(x)),
+            )
+        axis.set_xlim(0, 100)
+        axis.grid(alpha=0.2)
+        axis.set_ylabel("Cumulative indexing time (seconds)")
+
+    full_axis.set_title("Full scale (all approaches)")
+    full_axis.legend()
+    zoom_axis.set_ylim(-runner_up_max * 0.05, runner_up_max * 1.15)
+    zoom_axis.set_title(
+        f"Zoomed — {dominant}'s line runs off the top of this panel"
+    )
+    zoom_axis.set_xlabel("Rows ingested (% of experiment total)")
+
+    figure.suptitle("Cumulative index-maintenance time vs. rows ingested", fontsize=16)
+    figure.tight_layout()
+    figure.savefig(output, dpi=160)
+    plt.close(figure)
 
 
 def save_partitions_plot(results: pd.DataFrame, output: Path) -> None:
@@ -256,10 +334,10 @@ def save_partitions_plot(results: pd.DataFrame, output: Path) -> None:
         axis.plot(
             group["query_number"],
             group["index_partitions"],
-            color=COLORS.get(approach),
             linewidth=2,
             drawstyle="steps-post",
             label=approach,
+            **series_style(approach, len(group)),
         )
     add_rebuild_markers(axis, results)
     axis.set_title("IVF partition count over time")

@@ -4,16 +4,16 @@
   "source_rows": 1000000,
   "vector_dimension": 128,
   "vector_dtype": "float32",
-  "initial_write_seconds": 0.149,
+  "initial_write_seconds": 0.117,
   "initial_index_seconds": {
-    "ivf_pq": 4.147,
-    "ivf_rq": 0.654,
-    "ivf_hnsw": 4.902
+    "ivf_pq": 4.138,
+    "ivf_rq": 0.684,
+    "ivf_hnsw": 4.887
   },
   "initial_index_vectors_per_second": {
-    "ivf_pq": 192912.195,
-    "ivf_rq": 1222774.169,
-    "ivf_hnsw": 163210.833
+    "ivf_pq": 193346.99,
+    "ivf_rq": 1168827.373,
+    "ivf_hnsw": 163702.278
   },
   "partition_policy": "max(1, int(min(num_rows / target_partition_size, sqrt(num_rows))))",
   "arguments": {
