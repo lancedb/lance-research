@@ -1,5 +1,5 @@
 {
-  "experiment": "multi-segment vs single-segment IVF-PQ",
+  "experiment": "multi-segment vs single-segment Lance vector indexes",
   "arguments": {
     "base_vectors": "/Users/jasonzheng/Desktop/jason weston benchmarking project/vector search/sift/sift_base.fvecs",
     "query_vectors": "/Users/jasonzheng/Desktop/jason weston benchmarking project/vector search/sift/sift_query.fvecs",
@@ -14,20 +14,28 @@
       4,
       5
     ],
+    "index_types": [
+      "IVF_PQ",
+      "IVF_HNSW_PQ",
+      "IVF_HNSW_SQ"
+    ],
     "data_fragments": 60,
     "write_batch_rows": 100000,
     "target_partition_size": 4096,
     "num_sub_vectors": 16,
+    "hnsw_m": 20,
+    "hnsw_ef_construction": 300,
+    "hnsw_ef": 100,
     "build_workers": 0,
     "queries": 100,
     "warmup_queries": 10,
     "repetitions": 5,
-    "recall_k": 10,
+    "recall_k": 50,
     "nprobes": 16,
     "refine_factor": 5
   },
   "ground_truth_source": "file",
-  "data_write_seconds": 0.24,
+  "data_write_seconds": 0.14,
   "actual_data_fragments": 60,
   "timing": "ANN latency uses perf_counter_ns around Lance query execution and result materialization; build_wall_seconds covers concurrent segment construction plus commit using perf_counter; build_cpu_seconds uses process_time; segment_build_seconds_sum sums each worker's elapsed build duration.",
   "environment": {

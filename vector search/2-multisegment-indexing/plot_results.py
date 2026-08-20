@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        help="Defaults to the directory containing results.csv.",
+        help="Directory for generated PNG files (defaults to a 'plots' folder beside results.csv).",
     )
     return parser.parse_args()
 
@@ -52,10 +52,7 @@ def summarize(results: pd.DataFrame) -> pd.DataFrame:
             build_cpu_seconds=("build_cpu_seconds", "first"),
             segment_build_seconds_sum=("segment_build_seconds_sum", "first"),
             build_vectors_per_second=("build_vectors_per_second", "first"),
-            build_workers=("build_workers", "first"),
             rows=("rows", "first"),
-            rows_per_segment_max=("rows_per_segment_max", "first"),
-            index_size_bytes=("index_size_bytes", "first"),
             total_ivf_partitions=("total_ivf_partitions", "first"),
         )
         .reset_index()
@@ -73,24 +70,6 @@ def finish(figure, axis, output: Path) -> None:
     figure.tight_layout()
     figure.savefig(output, dpi=160)
     plt.close(figure)
-
-
-def save_latency(summary: pd.DataFrame, output: Path) -> None:
-    figure, axis = plt.subplots(figsize=(10, 6))
-    for index_type, group in index_groups(summary):
-        axis.plot(
-            group["segment_count"],
-            group["latency_p95_ms"],
-            linewidth=2,
-            marker="o",
-            color=INDEX_COLORS.get(index_type),
-            label=f"{index_type} p95",
-        )
-    axis.set_title("p95 ANN latency by index type and segment count")
-    axis.set_xlabel("Number of index segments")
-    axis.set_ylabel("ANN query latency (ms)")
-    axis.set_xticks(sorted(summary["segment_count"].unique()))
-    finish(figure, axis, output)
 
 
 def save_latency_distribution(results: pd.DataFrame, output: Path) -> None:
@@ -206,43 +185,6 @@ def save_build_throughput(summary: pd.DataFrame, output: Path) -> None:
     finish(figure, axis, output)
 
 
-def save_worker_working_set(summary: pd.DataFrame, output: Path) -> None:
-    figure, axis = plt.subplots(figsize=(10, 6))
-    by_segments = summary.groupby("segment_count", sort=True).first().reset_index()
-    millions = by_segments["rows_per_segment_max"] / 1_000_000
-    axis.plot(
-        by_segments["segment_count"],
-        millions,
-        linewidth=2,
-        marker="o",
-        color=COLOR,
-        label="largest segment assigned to one worker",
-    )
-    axis.set_title("Maximum per-worker indexing working set")
-    axis.set_xlabel("Number of index segments / available workers")
-    axis.set_ylabel("Maximum rows handled by one worker (millions)")
-    axis.set_xticks(by_segments["segment_count"])
-    finish(figure, axis, output)
-
-
-def save_index_size(summary: pd.DataFrame, output: Path) -> None:
-    figure, axis = plt.subplots(figsize=(10, 6))
-    for index_type, group in index_groups(summary):
-        axis.plot(
-            group["segment_count"],
-            group["index_size_bytes"] / (1024 * 1024),
-            linewidth=2,
-            marker="o",
-            color=INDEX_COLORS.get(index_type),
-            label=index_type,
-        )
-    axis.set_title("Committed index size by type and segment count")
-    axis.set_xlabel("Number of physical index segments")
-    axis.set_ylabel("Index size (MiB)")
-    axis.set_xticks(sorted(summary["segment_count"].unique()))
-    finish(figure, axis, output)
-
-
 def save_tradeoff(summary: pd.DataFrame, output: Path, recall_k: int) -> None:
     figure, axis = plt.subplots(figsize=(10, 6))
     for index_type, group in index_groups(summary):
@@ -280,38 +222,29 @@ def main() -> None:
         "build_cpu_seconds",
         "segment_build_seconds_sum",
         "build_vectors_per_second",
-        "build_workers",
         "rows",
-        "rows_per_segment_max",
-        "index_size_bytes",
         "total_ivf_partitions",
     }
     missing = required - set(results.columns)
     if missing:
         raise ValueError(f"Missing result columns: {', '.join(sorted(missing))}")
-    output_dir = args.output_dir or args.results.parent
+    output_dir = args.output_dir or args.results.parent / "plots"
     output_dir.mkdir(parents=True, exist_ok=True)
     summary = summarize(results)
     recall_k = int(results["recall_k"].iloc[0])
     outputs = {
-        "latency": output_dir / "latency_vs_segments.png",
         "latency_distribution": output_dir / "latency_distribution.png",
         "recall": output_dir / "recall_vs_segments.png",
         "throughput": output_dir / "query_throughput_vs_segments.png",
         "build": output_dir / "index_build_time_vs_segments.png",
         "build_throughput": output_dir / "index_build_throughput.png",
-        "worker_working_set": output_dir / "worker_working_set.png",
-        "index_size": output_dir / "index_size_vs_segments.png",
         "tradeoff": output_dir / "recall_latency_tradeoff.png",
     }
-    save_latency(summary, outputs["latency"])
     save_latency_distribution(results, outputs["latency_distribution"])
     save_recall(summary, outputs["recall"], recall_k)
     save_throughput(summary, outputs["throughput"])
     save_build_cost(summary, outputs["build"])
     save_build_throughput(summary, outputs["build_throughput"])
-    save_worker_working_set(summary, outputs["worker_working_set"])
-    save_index_size(summary, outputs["index_size"])
     save_tradeoff(summary, outputs["tradeoff"], recall_k)
     for output in outputs.values():
         print(f"Wrote {output}")

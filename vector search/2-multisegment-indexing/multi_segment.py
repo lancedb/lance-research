@@ -13,7 +13,7 @@ The bundled SIFT1M data is a practical local-scale default.  A genuine 5B run
 requires a 5B-vector fvecs file plus compatible query and ground-truth files.
 
 Quick smoke test:
-    python attempt_1.py --rows 10000 --segment-counts 1,2 \
+    python multi_segment.py --rows 10000 --segment-counts 1,2 \
         --data-fragments 4 --queries 3 --warmup-queries 1 --repetitions 2 \
         --ground-truth-mode exact --work-dir /tmp/lance-multisegment-smoke
 """
@@ -180,29 +180,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--queries", type=int, default=100)
     parser.add_argument("--warmup-queries", type=int, default=10)
     parser.add_argument("--repetitions", type=int, default=5)
-    parser.add_argument("--recall-k", type=int, default=10)
+    parser.add_argument("--recall-k", type=int, default=50)
     parser.add_argument("--nprobes", type=int, default=16)
     parser.add_argument("--refine-factor", type=int, default=5)
     return parser.parse_args()
-
-
-def read_vector_file(path: Path, scalar_type: np.dtype) -> np.ndarray:
-    """Memory-map an fvecs/ivecs file and return its payload columns."""
-    if not path.exists():
-        raise FileNotFoundError(path)
-    header = np.memmap(path, dtype=np.int32, mode="r", shape=(1,))
-    width = int(header[0])
-    if width <= 0:
-        raise ValueError(f"Invalid vector width in {path}")
-    record_bytes = np.dtype(scalar_type).itemsize * (width + 1)
-    if path.stat().st_size % record_bytes:
-        raise ValueError(f"Invalid vector file size for {path}")
-    row_count = path.stat().st_size // record_bytes
-    records = np.memmap(path, dtype=scalar_type, mode="r", shape=(row_count, width + 1))
-    dimensions = np.asarray(records[:, 0]).view(np.int32)
-    if not np.all(dimensions == width):
-        raise ValueError(f"Inconsistent vector widths in {path}")
-    return records[:, 1:]
 
 
 def validate_args(
@@ -249,6 +230,25 @@ def validate_args(
         raise ValueError("Base and query vector dimensions differ")
     if base_vectors.shape[1] % args.num_sub_vectors:
         raise ValueError("Vector dimension must divide evenly into --num-sub-vectors")
+
+
+def read_vector_file(path: Path, scalar_type: np.dtype) -> np.ndarray:
+    """Memory-map an fvecs/ivecs file and return its payload columns."""
+    if not path.exists():
+        raise FileNotFoundError(path)
+    header = np.memmap(path, dtype=np.int32, mode="r", shape=(1,))
+    width = int(header[0])
+    if width <= 0:
+        raise ValueError(f"Invalid vector width in {path}")
+    record_bytes = np.dtype(scalar_type).itemsize * (width + 1)
+    if path.stat().st_size % record_bytes:
+        raise ValueError(f"Invalid vector file size for {path}")
+    row_count = path.stat().st_size // record_bytes
+    records = np.memmap(path, dtype=scalar_type, mode="r", shape=(row_count, width + 1))
+    dimensions = np.asarray(records[:, 0]).view(np.int32)
+    if not np.all(dimensions == width):
+        raise ValueError(f"Inconsistent vector widths in {path}")
+    return records[:, 1:]
 
 
 def vector_record_batch(vectors: np.ndarray, start_id: int) -> pa.RecordBatch:
@@ -528,8 +528,12 @@ def run_queries(
         "nprobes": args.nprobes,
         "refine_factor": args.refine_factor,
     }
+    effective_hnsw_ef = args.hnsw_ef
     if "HNSW" in index_type:
-        nearest_common["ef"] = args.hnsw_ef
+        # Lance's HNSW search requires ef >= the refine stage's candidate
+        # count (k * refine_factor), so the floor must scale with recall_k.
+        effective_hnsw_ef = max(args.hnsw_ef, args.recall_k * args.refine_factor)
+        nearest_common["ef"] = effective_hnsw_ef
     for query in queries[: args.warmup_queries]:
         dataset.to_table(
             columns=[ID_COLUMN],
@@ -578,7 +582,7 @@ def run_queries(
                     query_throughput_qps=1000 / latency_ms,
                     nprobes=args.nprobes,
                     refine_factor=args.refine_factor,
-                    hnsw_ef=args.hnsw_ef,
+                    hnsw_ef=effective_hnsw_ef,
                 )
             )
         print(
@@ -769,7 +773,10 @@ def main() -> None:
     queries = query_vectors[: args.queries]
 
     reset_work_dir(args.work_dir)
-    dataset_path = args.work_dir / "data.lance"
+    tables_dir = args.work_dir / "tables"
+    tables_dir.mkdir(parents=True)
+
+    dataset_path = tables_dir / "data.lance"
     dataset, write_seconds = write_dataset(base_vectors, dataset_path, args)
     actual_fragments = len(dataset.get_fragments())
     if actual_fragments < max(args.segment_counts):
@@ -788,28 +795,31 @@ def main() -> None:
         actual_fragments,
     )
 
+    variants = [
+        (index_type, segment_count)
+        for index_type in args.index_types
+        for segment_count in args.segment_counts
+    ]
+
     all_results: list[QueryResult] = []
     summaries: list[dict[str, int | float]] = []
-    for index_type in args.index_types:
-        for segment_count in args.segment_counts:
-            build = build_segmented_index(
-                dataset_path, index_type, segment_count, args
+    for index_type, segment_count in variants:
+        build = build_segmented_index(dataset_path, index_type, segment_count, args)
+        all_results.extend(
+            run_queries(
+                dataset_path,
+                index_type,
+                segment_count,
+                build,
+                queries,
+                truth,
+                args,
             )
-            all_results.extend(
-                run_queries(
-                    dataset_path,
-                    index_type,
-                    segment_count,
-                    build,
-                    queries,
-                    truth,
-                    args,
-                )
-            )
-            summaries = summarize(all_results)
-            write_results(args.work_dir / "results.csv", all_results)
-            write_summary_csv(args.work_dir / "summary.csv", summaries)
-            write_readable_results(args.work_dir / "results_readable.txt", summaries)
+        )
+        summaries = summarize(all_results)
+        write_results(args.work_dir / "results.csv", all_results)
+        write_summary_csv(args.work_dir / "summary.csv", summaries)
+        write_readable_results(args.work_dir / "results_readable.txt", summaries)
 
     print_summary(summaries)
     print(f"\nDetailed samples: {args.work_dir / 'results.csv'}")
