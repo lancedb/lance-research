@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(source .venv/bin/activate*)",
-      "Bash(source \"../../.venv/bin/activate\"*)"
+      "Bash(source \"../../.venv/bin/activate\"*)",
+      "Bash(rm -rf /tmp/lance-shuffled-read-debug)"
+    ],
+    "additionalDirectories": [
+      "/private/tmp/lance-shuffled-read-debug"
     ]
   }
 }

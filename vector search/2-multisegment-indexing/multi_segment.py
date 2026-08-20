@@ -90,6 +90,7 @@ class QueryResult:
     hnsw_ef: int
 
 
+#not interesting. Step 0. validating sanity checks, basic setups
 def parse_segment_counts(value: str) -> list[int]:
     try:
         counts = [int(item.strip()) for item in value.split(",") if item.strip()]
@@ -263,6 +264,17 @@ def vector_record_batch(vectors: np.ndarray, start_id: int) -> pa.RecordBatch:
     )
 
 
+def reset_work_dir(path: Path) -> None:
+    resolved = path.resolve()
+    if resolved in {Path("/").resolve(), EXPERIMENT_DIR.resolve()}:
+        raise ValueError(f"Refusing to reset unsafe work directory: {resolved}")
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True)
+
+
+#Step 1 of experiment. Write the fixed dataset once, then build one
+#independently trained index per index-type/segment-count combination.
 def write_dataset(
     vectors: np.ndarray, dataset_path: Path, args: argparse.Namespace
 ) -> tuple[lance.LanceDataset, float]:
@@ -475,6 +487,31 @@ def load_ground_truth(
     return exact_ground_truth(dataset, queries, args.recall_k), "exact"
 
 
+#step 2 of experiment. run the same query/repetition matrix against each
+#built index and record recall + latency for every round.
+def measure_query(
+    dataset: lance.LanceDataset,
+    query: np.ndarray,
+    query_index: int,
+    nearest_common: dict[str, object],
+    truth: list[set[int]],
+    args: argparse.Namespace,
+) -> tuple[float, float, float]:
+    """Measure one ANN query's latency, recall@k, and precision@k."""
+    started_ns = time.perf_counter_ns()
+    table = dataset.to_table(
+        columns=[ID_COLUMN],
+        nearest={**nearest_common, "q": np.asarray(query, dtype=np.float32)},
+        disable_scoring_autoprojection=True,
+    )
+    latency_ms = (time.perf_counter_ns() - started_ns) / 1_000_000
+    returned = set(map(int, table[ID_COLUMN].to_pylist()))
+    overlap = len(returned & truth[query_index])
+    recall_at_k = overlap / args.recall_k
+    precision_at_k = overlap / max(1, len(returned))
+    return latency_ms, recall_at_k, precision_at_k
+
+
 def run_queries(
     dataset_path: Path,
     index_type: str,
@@ -505,18 +542,9 @@ def run_queries(
         # Rotate query order between repetitions to reduce ordering/cache bias.
         order = np.roll(np.arange(args.queries), repetition - 1)
         for query_index in order:
-            started_ns = time.perf_counter_ns()
-            table = dataset.to_table(
-                columns=[ID_COLUMN],
-                nearest={
-                    **nearest_common,
-                    "q": np.asarray(queries[query_index], dtype=np.float32),
-                },
-                disable_scoring_autoprojection=True,
+            latency_ms, recall_at_k, precision_at_k = measure_query(
+                dataset, queries[query_index], int(query_index), nearest_common, truth, args
             )
-            latency_ms = (time.perf_counter_ns() - started_ns) / 1_000_000
-            returned = set(map(int, table[ID_COLUMN].to_pylist()))
-            overlap = len(returned & truth[query_index])
             results.append(
                 QueryResult(
                     index_type=index_type,
@@ -544,8 +572,8 @@ def run_queries(
                         build["build_vectors_per_second"]
                     ),
                     recall_k=args.recall_k,
-                    recall_at_k=overlap / args.recall_k,
-                    precision_at_k=overlap / max(1, len(returned)),
+                    recall_at_k=recall_at_k,
+                    precision_at_k=precision_at_k,
                     ann_query_ms=latency_ms,
                     query_throughput_qps=1000 / latency_ms,
                     nprobes=args.nprobes,
@@ -560,11 +588,13 @@ def run_queries(
     return results
 
 
-def rounded(value):
+#step 3 of experiment: measure and report
+def round_output_floats(value):
+    """Round floats for readable output without reducing calculation precision."""
     if isinstance(value, float):
         return round(value, OUTPUT_DECIMAL_PLACES)
     if isinstance(value, dict):
-        return {key: rounded(item) for key, item in value.items()}
+        return {key: round_output_floats(item) for key, item in value.items()}
     return value
 
 
@@ -574,7 +604,7 @@ def write_results(path: Path, results: list[QueryResult]) -> None:
     with path.open("w", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=list(asdict(results[0])))
         writer.writeheader()
-        writer.writerows(rounded(asdict(result)) for result in results)
+        writer.writerows(round_output_floats(asdict(result)) for result in results)
 
 
 def summarize(results: list[QueryResult]) -> list[dict[str, int | float]]:
@@ -632,10 +662,11 @@ def write_summary_csv(path: Path, summaries: list[dict[str, int | float]]) -> No
     with path.open("w", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=list(summaries[0]))
         writer.writeheader()
-        writer.writerows(rounded(summary) for summary in summaries)
+        writer.writerows(round_output_floats(summary) for summary in summaries)
 
 
-def write_readable(path: Path, summaries: list[dict[str, int | float]]) -> None:
+def write_readable_results(path: Path, summaries: list[dict[str, int | float]]) -> None:
+    """Write a compact fixed-width view of the most useful summary columns."""
     columns = [
         ("index_type", "index_type", "<"),
         ("segments", "segments", ">"),
@@ -659,7 +690,7 @@ def write_readable(path: Path, summaries: list[dict[str, int | float]]) -> None:
     ]
     table = []
     for summary in summaries:
-        values = rounded(summary)
+        values = round_output_floats(summary)
         table.append([str(values[key]) for _, key, _ in columns])
     widths = [
         max(len(heading), *(len(row[index]) for row in table))
@@ -714,16 +745,20 @@ def write_metadata(
             "platform": platform.platform(),
         },
     }
-    path.write_text(json.dumps(rounded(metadata), indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(round_output_floats(metadata), indent=2) + "\n", encoding="utf-8")
 
 
-def reset_work_dir(path: Path) -> None:
-    resolved = path.resolve()
-    if resolved in {Path("/").resolve(), EXPERIMENT_DIR.resolve()}:
-        raise ValueError(f"Refusing to reset unsafe work directory: {resolved}")
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir(parents=True)
+def print_summary(summaries: list[dict[str, int | float]]) -> None:
+    print("\nAggregate results (all index-type/segment-count combinations):")
+    for summary in summaries:
+        print(
+            f"  {summary['index_type']:12s} segments={summary['segments']}: "
+            f"build={summary['build_vectors_per_s']:,.0f} vec/s "
+            f"({summary['wall_speedup_vs_single']:.2f}x vs. 1 segment), "
+            f"ANN mean={summary['latency_mean_ms']:.3f}ms, "
+            f"p95={summary['latency_p95_ms']:.3f}ms, "
+            f"recall={summary['mean_recall_at_k']:.3f}"
+        )
 
 
 def main() -> None:
@@ -754,6 +789,7 @@ def main() -> None:
     )
 
     all_results: list[QueryResult] = []
+    summaries: list[dict[str, int | float]] = []
     for index_type in args.index_types:
         for segment_count in args.segment_counts:
             build = build_segmented_index(
@@ -773,8 +809,9 @@ def main() -> None:
             summaries = summarize(all_results)
             write_results(args.work_dir / "results.csv", all_results)
             write_summary_csv(args.work_dir / "summary.csv", summaries)
-            write_readable(args.work_dir / "results_readable.txt", summaries)
+            write_readable_results(args.work_dir / "results_readable.txt", summaries)
 
+    print_summary(summaries)
     print(f"\nDetailed samples: {args.work_dir / 'results.csv'}")
     print(f"Summary CSV:      {args.work_dir / 'summary.csv'}")
     print(f"Readable summary: {args.work_dir / 'results_readable.txt'}")

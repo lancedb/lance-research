@@ -63,6 +63,29 @@
                 "${workspaceFolder}/vector search/2-multisegment-indexing/multisegment_smoke"
             ],
             "justMyCode": false
+        },
+        {
+            "name": "Python: shuffled-read benchmark (smoke)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/data loading/4-shuffled-read/shuffled_read.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/data loading/4-shuffled-read",
+            "args": [
+                "--backend",
+                "local_nvme",
+                "--allow-non-nvme",
+                "--rows",
+                "5000",
+                "--trials",
+                "2",
+                "--overwrite",
+                "--local-db-dir",
+                "/tmp/lance-shuffled-read-debug/nvme_lancedb",
+                "--output-dir",
+                "/tmp/lance-shuffled-read-debug/results"
+            ],
+            "justMyCode": false
         }
     ]
 }
