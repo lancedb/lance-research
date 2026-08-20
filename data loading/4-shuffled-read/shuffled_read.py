@@ -58,7 +58,6 @@ RESULT_FIELDS = (
     "take_size",
     "seed",
     "wall_seconds",
-    "values_per_second",
     "payload_mb_per_second",
 )
 
@@ -70,7 +69,6 @@ class StorageTarget:
     db: object
     local_path: Path | None = None
 
-
 @dataclass(frozen=True)
 class ReadResult:
     backend: str
@@ -81,10 +79,10 @@ class ReadResult:
     take_size: int
     seed: int
     wall_seconds: float
-    values_per_second: float
     payload_mb_per_second: float
 
-
+# Step 0. Not interesting: argument parsing/validation, storage-target
+# discovery, and loading the shared SIFT1M source vectors.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -146,10 +144,8 @@ def parse_args() -> argparse.Namespace:
             parser.error("--s3-uri must start with s3://")
     return args
 
-
 def selected_backends(selection: str) -> list[str]:
     return ["local_nvme", "aws_s3"] if selection == "both" else [selection]
-
 
 def nvme_devices() -> list[str]:
     if platform.system() == "Darwin":
@@ -181,7 +177,6 @@ def nvme_devices() -> list[str]:
         except (OSError, subprocess.SubprocessError):
             return []
     return []
-
 
 def connect_targets(args: argparse.Namespace, devices: list[str]) -> list[StorageTarget]:
     targets: list[StorageTarget] = []
@@ -263,13 +258,12 @@ def table_exists(db: object, name: str) -> bool:
         raise
 
 
-def directory_bytes(path: Path) -> int:
-    return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
-
-
+# Step 1 of experiment. Write the same SIFT1M table to each selected backend.
+# This is setup for the shuffled-read benchmark, not something the experiment
+# measures, so it is intentionally untimed and unreported.
 def load_table(
     args: argparse.Namespace, target: StorageTarget, vectors: np.ndarray
-) -> dict[str, object]:
+) -> None:
     if args.rows > len(vectors):
         raise ValueError(
             f"Requested {args.rows:,} vectors, but SIFT contains {len(vectors):,}."
@@ -291,30 +285,16 @@ def load_table(
     reader = pa.RecordBatchReader.from_batches(
         lance_schema(), sift_batches(vectors, args.rows, args.write_batch_rows)
     )
-    started = time.perf_counter_ns()
     table = target.db.create_table(  # type: ignore[attr-defined]
         TABLE_NAME, data=reader, mode="overwrite" if exists else "create"
     )
-    elapsed = (time.perf_counter_ns() - started) / 1e9
     actual_rows = table.count_rows()
     if actual_rows != args.rows:
         raise RuntimeError(f"wrote {actual_rows:,} rows; expected {args.rows:,}")
-    result: dict[str, object] = {
-        "backend": target.backend,
-        "storage_uri": target.uri,
-        "rows": actual_rows,
-        "value_bytes": VALUE_BYTES,
-        "wall_seconds": elapsed,
-        "values_per_second": actual_rows / elapsed,
-        "payload_mb_per_second": actual_rows * VALUE_BYTES / elapsed / 1e6,
-        "stored_bytes": (
-            directory_bytes(target.local_path) if target.local_path is not None else None
-        ),
-    }
-    print(f"Load [{target.backend}]: {json.dumps(result, sort_keys=True)}", flush=True)
-    return result
+    print(f"Loaded {actual_rows:,} rows [{target.backend}]: {target.uri}", flush=True)
 
-
+# Step 2 of experiment. Read back the same seeded shuffle order on each
+# backend/trial and time it.
 def validate_table(table: object, expected_rows: int) -> tuple[object, int]:
     actual_rows = table.count_rows()  # type: ignore[attr-defined]
     dataset = table.to_lance()  # type: ignore[attr-defined]
@@ -369,30 +349,56 @@ def benchmark(
             take_size=args.take_size,
             seed=trial_seed,
             wall_seconds=elapsed,
-            values_per_second=values_read / elapsed,
             payload_mb_per_second=values_read * VALUE_BYTES / elapsed / 1e6,
         )
         results.append(result)
         print(f"Read [{target.backend}]: {json.dumps(asdict(result), sort_keys=True)}")
     return results
 
+# Step 3 of experiment: measure and report.
+def write_readable_results(path: Path, results: list[ReadResult]) -> None:
+    """Write a fixed-width text view of the CSV results for quick scanning."""
+    rows = []
+    for result in results:
+        values = asdict(result)
+        rows.append(
+            [
+                f"{values[field]:.3f}" if isinstance(values[field], float) else str(values[field])
+                for field in RESULT_FIELDS
+            ]
+        )
+    widths = [
+        max(len(heading), *(len(row[index]) for row in rows))
+        for index, heading in enumerate(RESULT_FIELDS)
+    ]
+    header = "  ".join(
+        f"{heading:<{widths[index]}}" for index, heading in enumerate(RESULT_FIELDS)
+    )
+    separator = "  ".join("-" * width for width in widths)
+    lines = [header, separator]
+    for row in rows:
+        lines.append(
+            "  ".join(f"{value:<{widths[index]}}" for index, value in enumerate(row))
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
 
 def summarize_reads(results: list[ReadResult]) -> dict[str, object]:
     summaries: dict[str, object] = {}
     for backend in sorted({result.backend for result in results}):
         rates = [
-            result.values_per_second for result in results if result.backend == backend
+            result.payload_mb_per_second for result in results if result.backend == backend
         ]
         summaries[backend] = {
             "trials": len(rates),
-            "mean_values_per_second": statistics.fmean(rates),
-            "median_values_per_second": statistics.median(rates),
-            "min_values_per_second": min(rates),
-            "max_values_per_second": max(rates),
+            "mean_payload_mb_per_second": statistics.fmean(rates),
+            "median_payload_mb_per_second": statistics.median(rates),
+            "min_payload_mb_per_second": min(rates),
+            "max_payload_mb_per_second": max(rates),
         }
     if {"local_nvme", "aws_s3"}.issubset(summaries):
-        local = summaries["local_nvme"]["median_values_per_second"]  # type: ignore[index]
-        s3 = summaries["aws_s3"]["median_values_per_second"]  # type: ignore[index]
+        local = summaries["local_nvme"]["median_payload_mb_per_second"]  # type: ignore[index]
+        s3 = summaries["aws_s3"]["median_payload_mb_per_second"]  # type: ignore[index]
         summaries["comparison"] = {
             "local_nvme_over_aws_s3_median_speedup": local / s3
         }
@@ -403,22 +409,17 @@ def write_outputs(
     args: argparse.Namespace,
     devices: list[str],
     targets: list[StorageTarget],
-    loads: dict[str, dict[str, object]],
     reads: list[ReadResult],
 ) -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = args.output_dir / "shuffled_read_results.csv"
+    readable_path = args.output_dir / "shuffled_read_results_readable.txt"
     if reads:
         with csv_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=RESULT_FIELDS)
             writer.writeheader()
             writer.writerows(asdict(result) for result in reads)
-
-    loads_path = args.output_dir / "load_results.json"
-    if loads:
-        loads_path.write_text(json.dumps(loads, indent=2) + "\n", encoding="utf-8")
-    elif loads_path.exists():
-        loads = json.loads(loads_path.read_text(encoding="utf-8"))
+        write_readable_results(readable_path, reads)
 
     metadata = {
         "experiment": "one-phase SIFT1M shuffled read: local NVMe vs AWS S3",
@@ -446,7 +447,6 @@ def write_outputs(
             "same region as S3 and use that instance's local NVMe condition."
         ),
         "cache_note": "OS and Lance caches are not flushed between trials.",
-        "loads": loads,
         "read_summary": summarize_reads(reads) if reads else None,
         "configuration": {
             "backend": args.backend,
@@ -468,7 +468,7 @@ def write_outputs(
     }
     metadata_path = args.output_dir / "metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-    for path in (csv_path if reads else None, loads_path, metadata_path):
+    for path in (csv_path if reads else None, readable_path if reads else None, metadata_path):
         if path is not None and path.exists():
             print(f"Wrote {path}")
 
@@ -484,15 +484,14 @@ def main() -> None:
         print(f"Target [{target.backend}]: {target.uri}")
 
     vectors = load_sift_vectors(args.sift_base) if args.mode in ("all", "load") else None
-    loads: dict[str, dict[str, object]] = {}
     if vectors is not None:
         for target in targets:
-            loads[target.backend] = load_table(args, target, vectors)
+            load_table(args, target, vectors)
     reads: list[ReadResult] = []
     if args.mode in ("all", "benchmark"):
         for target in targets:
             reads.extend(benchmark(args, target))
-    write_outputs(args, devices, targets, loads, reads)
+    write_outputs(args, devices, targets, reads)
 
 
 if __name__ == "__main__":

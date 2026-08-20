@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import os
 import statistics
 import tempfile
@@ -37,7 +36,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        help="PNG directory; defaults beside the results CSV.",
+        default=SCRIPT_DIR / "plots",
+        help="PNG directory (default: plots/ beside this script).",
     )
     return parser.parse_args()
 
@@ -52,7 +52,7 @@ def read_trials(path: Path) -> list[dict[str, str | float]]:
     if "backend" not in raw_rows[0]:
         raise SystemExit(
             "Results predate the NVMe/S3 comparison and have no backend column. "
-            "Run attempt_1.py again."
+            "Run shuffled_read.py again."
         )
     numeric = (
         "trial",
@@ -61,7 +61,6 @@ def read_trials(path: Path) -> list[dict[str, str | float]]:
         "take_size",
         "seed",
         "wall_seconds",
-        "values_per_second",
         "payload_mb_per_second",
     )
     rows: list[dict[str, str | float]] = []
@@ -91,22 +90,14 @@ def style_axis(axis: plt.Axes) -> None:
 def plot_read_comparison(
     groups: dict[str, list[dict[str, str | float]]], output: Path
 ) -> None:
-    figure, (value_axis, payload_axis) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    figure, axis = plt.subplots(figsize=(10, 5))
     all_trials: set[int] = set()
     for backend, rows in groups.items():
         trials = [int(float(row["trial"])) for row in rows]
         all_trials.update(trials)
         label = BACKEND_LABELS.get(backend, backend)
         color = BACKEND_COLORS.get(backend)
-        value_axis.plot(
-            trials,
-            [float(row["values_per_second"]) for row in rows],
-            marker="o",
-            linewidth=2,
-            color=color,
-            label=label,
-        )
-        payload_axis.plot(
+        axis.plot(
             trials,
             [float(row["payload_mb_per_second"]) for row in rows],
             marker="o",
@@ -114,14 +105,12 @@ def plot_read_comparison(
             color=color,
             label=label,
         )
-    value_axis.set_title("SIFT1M one-phase shuffled-read throughput")
-    value_axis.set_ylabel("Values / second")
-    payload_axis.set_xlabel("Trial")
-    payload_axis.set_ylabel("Payload MB / second")
-    payload_axis.set_xticks(sorted(all_trials))
-    for axis in (value_axis, payload_axis):
-        style_axis(axis)
-        axis.legend()
+    axis.set_title("SIFT1M one-phase shuffled-read throughput")
+    axis.set_xlabel("Trial")
+    axis.set_ylabel("Payload MB / second")
+    axis.set_xticks(sorted(all_trials))
+    style_axis(axis)
+    axis.legend()
     figure.tight_layout()
     figure.savefig(output, dpi=180)
     plt.close(figure)
@@ -139,110 +128,16 @@ def plot_median_comparison(
     backends = list(groups)
     labels = [BACKEND_LABELS.get(backend, backend) for backend in backends]
     colors = [BACKEND_COLORS.get(backend, "#6c757d") for backend in backends]
-    figure, (value_axis, payload_axis) = plt.subplots(1, 2, figsize=(11, 5))
-    value_bars = value_axis.bar(
-        labels,
-        [median_for(groups[backend], "values_per_second") for backend in backends],
-        color=colors,
-    )
-    value_axis.bar_label(value_bars, fmt="{:,.0f}", padding=3)
-    value_axis.set_title("Median value throughput")
-    value_axis.set_ylabel("Values / second")
-    payload_bars = payload_axis.bar(
+    figure, axis = plt.subplots(figsize=(6, 5))
+    bars = axis.bar(
         labels,
         [median_for(groups[backend], "payload_mb_per_second") for backend in backends],
         color=colors,
     )
-    payload_axis.bar_label(payload_bars, fmt="{:,.1f}", padding=3)
-    payload_axis.set_title("Median payload throughput")
-    payload_axis.set_ylabel("MB / second")
-    for axis in (value_axis, payload_axis):
-        style_axis(axis)
-    figure.suptitle("SIFT1M shuffled read: local NVMe vs. AWS S3", fontsize=15)
-    figure.tight_layout()
-    figure.savefig(output, dpi=180)
-    plt.close(figure)
-
-
-def plot_load_vs_read(
-    groups: dict[str, list[dict[str, str | float]]],
-    loads: dict[str, dict[str, object]],
-    output: Path,
-) -> None:
-    backends = [backend for backend in groups if backend in loads]
-    if not backends:
-        return
-    categories = ["Load", "Shuffled read\n(median)"]
-    x_positions = range(len(categories))
-    width = 0.8 / len(backends)
-    figure, (value_axis, payload_axis) = plt.subplots(1, 2, figsize=(12, 5))
-    for index, backend in enumerate(backends):
-        offset = (index - (len(backends) - 1) / 2) * width
-        x = [position + offset for position in x_positions]
-        label = BACKEND_LABELS.get(backend, backend)
-        color = BACKEND_COLORS.get(backend)
-        values = [
-            float(loads[backend]["values_per_second"]),
-            median_for(groups[backend], "values_per_second"),
-        ]
-        payload = [
-            float(loads[backend]["payload_mb_per_second"]),
-            median_for(groups[backend], "payload_mb_per_second"),
-        ]
-        value_axis.bar(x, values, width=width, color=color, label=label)
-        payload_axis.bar(x, payload, width=width, color=color, label=label)
-    for axis, title, ylabel in (
-        (value_axis, "Value throughput", "Values / second"),
-        (payload_axis, "Payload throughput", "MB / second"),
-    ):
-        axis.set_xticks(list(x_positions), categories)
-        axis.set_title(title)
-        axis.set_ylabel(ylabel)
-        axis.legend()
-        style_axis(axis)
-    figure.suptitle("SIFT1M LanceDB load and shuffled-read throughput", fontsize=15)
-    figure.tight_layout()
-    figure.savefig(output, dpi=180)
-    plt.close(figure)
-
-
-def plot_sequential_vs_shuffled(
-    shuffled: dict[str, list[dict[str, str | float]]],
-    sequential: dict[str, list[dict[str, str | float]]],
-    output: Path,
-) -> None:
-    backends = [backend for backend in shuffled if backend in sequential]
-    if not backends:
-        raise SystemExit("No backend appears in both shuffled and sequential results")
-    figure, axes = plt.subplots(
-        len(backends), 2, figsize=(11, 4.5 * len(backends)), squeeze=False
-    )
-    pattern_labels = ["Sequential read", "Shuffled read"]
-    pattern_colors = ["#52b788", "#dc2f02"]
-    for row_index, backend in enumerate(backends):
-        for column_index, (metric, ylabel) in enumerate(
-            (
-                ("values_per_second", "Values / second"),
-                ("payload_mb_per_second", "Payload MB / second"),
-            )
-        ):
-            axis = axes[row_index][column_index]
-            sequential_median = median_for(sequential[backend], metric)
-            shuffled_median = median_for(shuffled[backend], metric)
-            bars = axis.bar(
-                pattern_labels,
-                [sequential_median, shuffled_median],
-                color=pattern_colors,
-            )
-            format_string = "{:,.0f}" if metric == "values_per_second" else "{:,.1f}"
-            axis.bar_label(bars, fmt=format_string, padding=3)
-            slowdown = sequential_median / shuffled_median
-            axis.set_title(
-                f"{BACKEND_LABELS.get(backend, backend)} — {slowdown:,.1f}× shuffle penalty"
-            )
-            axis.set_ylabel(ylabel)
-            style_axis(axis)
-    figure.suptitle("SIFT1M sequential versus shuffled-read throughput", fontsize=15)
+    axis.bar_label(bars, fmt="{:,.1f}", padding=3)
+    axis.set_title("SIFT1M shuffled read: local NVMe vs. AWS S3")
+    axis.set_ylabel("Median payload MB / second")
+    style_axis(axis)
     figure.tight_layout()
     figure.savefig(output, dpi=180)
     plt.close(figure)
@@ -251,9 +146,7 @@ def plot_sequential_vs_shuffled(
 def main() -> None:
     args = parse_args()
     results_path = args.results.expanduser().resolve()
-    output_dir = (
-        args.output_dir.expanduser().resolve() if args.output_dir else results_path.parent
-    )
+    output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     groups = group_trials(read_trials(results_path))
 
@@ -264,26 +157,6 @@ def main() -> None:
     plot_read_comparison(groups, outputs[0])
     plot_median_comparison(groups, outputs[1])
 
-    loads_path = results_path.parent / "load_results.json"
-    if loads_path.is_file():
-        loads = json.loads(loads_path.read_text(encoding="utf-8"))
-        load_output = output_dir / "load_vs_shuffled_read_by_backend.png"
-        plot_load_vs_read(groups, loads, load_output)
-        outputs.append(load_output)
-    else:
-        print(f"Skipped load comparison; not found: {loads_path}")
-
-    sequential_path = results_path.parent / "sequential_read_results.csv"
-    if sequential_path.is_file():
-        sequential_groups = group_trials(read_trials(sequential_path))
-        pattern_output = output_dir / "sequential_vs_shuffled_by_backend.png"
-        plot_sequential_vs_shuffled(groups, sequential_groups, pattern_output)
-        outputs.append(pattern_output)
-    else:
-        print(
-            "Skipped sequential-vs-shuffled comparison; not found: "
-            f"{sequential_path}"
-        )
     for output in outputs:
         print(f"Wrote {output}")
 

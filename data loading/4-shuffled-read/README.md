@@ -36,19 +36,20 @@ export AWS_REGION="us-west-2"
 ## Run both backends
 
 Loading and reading in separate processes reduces immediate post-write cache
-effects:
+effects. Loading is untimed setup — it just gets the SIFT1M vectors onto each
+backend so the shuffled-read benchmark has something to read:
 
 ```bash
-python attempt_1.py --mode load --overwrite
-python attempt_1.py --mode benchmark --read-pattern both --trials 5
+python shuffled_read.py --mode load --overwrite
+python shuffled_read.py --mode benchmark --trials 5
 python plot_results.py
 ```
 
 `--backend both` is the default. To test only one target:
 
 ```bash
-python attempt_1.py --backend local_nvme --mode all --overwrite
-python attempt_1.py --backend aws_s3 --s3-uri s3://my-bucket/prefix --mode all --overwrite
+python shuffled_read.py --backend local_nvme --mode all --overwrite
+python shuffled_read.py --backend aws_s3 --s3-uri s3://my-bucket/prefix --mode all --overwrite
 ```
 
 For a storage-focused comparison, run the program on an EC2 instance in the
@@ -57,16 +58,19 @@ a laptop instead measures the public internet path in addition to S3.
 
 ## Outputs
 
-The `results/` directory contains:
+The `results/` directory (data only, gitignored, regenerated on each run) contains:
 
-- `shuffled_read_results.csv`: trials for both backends.
-- `sequential_read_results.csv`: standard contiguous scan trials for both backends.
-- `load_results.json`: load rates for both backends.
+- `shuffled_read_results.csv`: shuffled-read trials for both backends.
+- `shuffled_read_results_readable.txt`: the same trials as a fixed-width text table.
 - `metadata.json`: configuration, target URIs, comparison summary, and versions.
+
+Loading (writing SIFT1M onto each backend) is untimed setup for the shuffled-read
+benchmark, not something this experiment measures, so no load metrics are recorded.
+
+The `plots/` directory (tracked in git) contains:
+
 - `shuffled_read_trials_by_backend.png`: trial-by-trial comparison.
 - `shuffled_read_backend_comparison.png`: median NVMe versus S3 throughput.
-- `load_vs_shuffled_read_by_backend.png`: load and read rates for both targets.
-- `sequential_vs_shuffled_by_backend.png`: the shuffle penalty on each backend.
 
 Each SIFT vector is one 512-byte value. The comparison uses the same row count,
 take size, and permutation seeds on both backends. OS and Lance caches are not
