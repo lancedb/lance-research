@@ -131,7 +131,7 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Delta index segments to merge per SPFresh maintenance operation.",
     )
-    parser.add_argument("--recall-k", type=int, default=10)
+    parser.add_argument("--recall-k", type=int, default=50)
     parser.add_argument("--recall-nprobes", type=int, default=16)
     parser.add_argument("--recall-refine-factor", type=int, default=5)
     parser.add_argument(
